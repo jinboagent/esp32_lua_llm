@@ -1,0 +1,35 @@
+# ESP-IDF build output
+build/
+
+# Host test build output
+tests/host/build/
+
+# SDK config (auto-generated from sdkconfig.defaults)
+sdkconfig
+sdkconfig.old
+
+# Compiled binaries
+*.bin
+*.elf
+*.map
+*.o
+*.a
+
+# IDE / editor
+.vscode/
+.clangd
+
+# AI tools
+.aider*
+.qwen/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+#Debug Log
+trace/
