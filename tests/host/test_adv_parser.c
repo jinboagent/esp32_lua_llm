@@ -199,8 +199,8 @@ void test_parse_adv_shortened_name(void)
     TEST_ASSERT_EQUAL_STRING("Senso", report.name);
 }
 
-void test_adv_parser_main(void);
-void test_adv_parser_main(void)
+int test_adv_parser_main(void);
+int test_adv_parser_main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_parse_adv_valid_complete);
@@ -217,5 +217,5 @@ void test_adv_parser_main(void)
     RUN_TEST(test_report_init_null);
     RUN_TEST(test_parse_adv_complex);
     RUN_TEST(test_parse_adv_shortened_name);
-    UNITY_END();
+    return UNITY_END();
 }

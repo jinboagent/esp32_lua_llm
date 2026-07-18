@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include "proto_if.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * JSON Lines Encoder Interface
  *
@@ -35,3 +39,7 @@
 int json_encode_adv(const proto_adv_report_t *report,
                     char *buf, uint16_t buf_len,
                     uint16_t *out_len);
+
+#ifdef __cplusplus
+}
+#endif

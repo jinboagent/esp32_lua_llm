@@ -65,7 +65,8 @@ int json_encode_adv(const proto_adv_report_t *report,
 
     /* addr */
     char mac_str[18];
-    s_encode_mac(mac_str, sizeof(mac_str), report->addr);
+    int mac_ret = s_encode_mac(mac_str, sizeof(mac_str), report->addr);
+    if (mac_ret < 0) return mac_ret;
     n = snprintf(buf + pos, buf_len - pos, ",\"addr\":\"%s\"", mac_str);
     if (n < 0 || (uint16_t)n >= buf_len - pos) return -203;
     pos += (uint16_t)n;
@@ -83,8 +84,9 @@ int json_encode_adv(const proto_adv_report_t *report,
 
     /* name */
     if (report->has_name) {
-        char escaped_name[PROTO_DEVICE_NAME_MAX_LEN * 2];
-        s_encode_string_escaped(escaped_name, sizeof(escaped_name), report->name);
+        char escaped_name[PROTO_DEVICE_NAME_MAX_LEN * 6 + 1];
+        int esc_ret = s_encode_string_escaped(escaped_name, sizeof(escaped_name), report->name);
+        if (esc_ret < 0) return esc_ret;
         n = snprintf(buf + pos, buf_len - pos, ",\"name\":\"%s\"", escaped_name);
     } else {
         n = snprintf(buf + pos, buf_len - pos, ",\"name\":null");
@@ -130,6 +132,20 @@ int json_encode_adv(const proto_adv_report_t *report,
         pos += (uint16_t)n;
     } else {
         n = snprintf(buf + pos, buf_len - pos, ",\"manu\":null");
+        if (n < 0 || (uint16_t)n >= buf_len - pos) return -203;
+        pos += (uint16_t)n;
+    }
+
+    /* tx_power */
+    if (report->has_tx_power) {
+        n = snprintf(buf + pos, buf_len - pos, ",\"tx_power\":%d", (int)report->tx_power);
+        if (n < 0 || (uint16_t)n >= buf_len - pos) return -203;
+        pos += (uint16_t)n;
+    }
+
+    /* flags */
+    if (report->has_flags) {
+        n = snprintf(buf + pos, buf_len - pos, ",\"flags\":\"%02X\"", report->flags);
         if (n < 0 || (uint16_t)n >= buf_len - pos) return -203;
         pos += (uint16_t)n;
     }

@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * BLE Advertisement Parser Interface
  *
@@ -73,3 +77,7 @@ int proto_parse_adv_data(const uint8_t *raw_data, uint16_t raw_len,
  * @return 0 on success, -102 if report is NULL.
  */
 int proto_report_init(proto_adv_report_t *report);
+
+#ifdef __cplusplus
+}
+#endif

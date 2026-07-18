@@ -59,30 +59,27 @@ int filter_add_rule(filter_engine_t *eng, filter_type_t type,
 
 static bool s_wildcard_match(const char *pattern, const char *str)
 {
-    while (*pattern != '\0') {
-        if (*pattern == '*') {
+    const char *star_p = NULL;
+    const char *star_s = NULL;
+
+    while (*str != '\0') {
+        if (*pattern == '*' ) {
+            star_p = pattern++;
+            star_s = str;
+        } else if (tolower((unsigned char)*pattern) == tolower((unsigned char)*str)) {
             pattern++;
-            if (*pattern == '\0') {
-                return true;
-            }
-            while (*str != '\0') {
-                if (s_wildcard_match(pattern, str)) {
-                    return true;
-                }
-                str++;
-            }
+            str++;
+        } else if (star_p != NULL) {
+            pattern = star_p + 1;
+            str = ++star_s;
+        } else {
             return false;
         }
-        if (*str == '\0') {
-            return false;
-        }
-        if (tolower((unsigned char)*pattern) != tolower((unsigned char)*str)) {
-            return false;
-        }
-        pattern++;
-        str++;
     }
-    return *str == '\0';
+    while (*pattern == '*') {
+        pattern++;
+    }
+    return *pattern == '\0';
 }
 
 static bool s_match_name(const filter_rule_t *rule, const proto_adv_report_t *report)
@@ -129,6 +126,9 @@ static bool s_match_rssi(const filter_rule_t *rule, const proto_adv_report_t *re
 
 static bool s_match_mac(const filter_rule_t *rule, const proto_adv_report_t *report)
 {
+    if (strlen(rule->pattern) != 17) {
+        return false;
+    }
     uint8_t target[6];
     const char *p = rule->pattern;
     for (int i = 0; i < 6; i++) {
@@ -194,7 +194,7 @@ bool filter_evaluate(const filter_engine_t *eng,
                      const proto_adv_report_t *report)
 {
     if (eng == NULL || report == NULL) {
-        return true;
+        return false;
     }
     if (eng->rule_count == 0) {
         return true;

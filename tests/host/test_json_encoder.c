@@ -177,8 +177,8 @@ void test_json_encode_valid_json_structure(void)
     TEST_ASSERT_EQUAL_CHAR('\0', buf[len]);
 }
 
-void test_json_encoder_main(void);
-void test_json_encoder_main(void)
+int test_json_encoder_main(void);
+int test_json_encoder_main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_json_encode_basic);
@@ -192,5 +192,5 @@ void test_json_encoder_main(void)
     RUN_TEST(test_json_encode_name_escaping);
     RUN_TEST(test_json_encode_random_addr);
     RUN_TEST(test_json_encode_valid_json_structure);
-    UNITY_END();
+    return UNITY_END();
 }

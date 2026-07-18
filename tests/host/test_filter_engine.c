@@ -220,8 +220,8 @@ void test_filter_wildcard_star_only(void)
     TEST_ASSERT_TRUE(filter_evaluate(&eng, &r));
 }
 
-void test_filter_engine_main(void);
-void test_filter_engine_main(void)
+int test_filter_engine_main(void);
+int test_filter_engine_main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_filter_no_rules_passes_all);
@@ -238,5 +238,5 @@ void test_filter_engine_main(void)
     RUN_TEST(test_filter_null_engine);
     RUN_TEST(test_filter_name_no_name_in_report);
     RUN_TEST(test_filter_wildcard_star_only);
-    UNITY_END();
+    return UNITY_END();
 }

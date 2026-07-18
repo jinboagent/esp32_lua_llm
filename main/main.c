@@ -7,14 +7,14 @@
 #include "json_if.h"
 #include "filter_if.h"
 
-/* Hardcoded Xiaomi LYWSD03MMC temperature sensor advertisement */
+/* Hardcoded Xiaomi temperature sensor advertisement (31 bytes = legacy BLE max) */
 static const uint8_t xiaomi_adv[] = {
-    0x02, 0x01, 0x06,                                   /* Flags */
-    0x03, 0x03, 0x95, 0xFE,                             /* UUID: 0xFE95 (Xiaomi) */
-    0x0F, 0x16, 0x95, 0xFE, 0x30, 0x58, 0x5B, 0x04,    /* Service data */
-    0xDE, 0xA7, 0x13, 0xD1, 0x0C, 0x27, 0x84, 0x0C,
-    0x09, 0x09, 'L','Y','W','S','D','0','3','M','M',   /* Name */
-};
+    0x02, 0x01, 0x06,                                   /* Flags: 3 bytes */
+    0x03, 0x03, 0x95, 0xFE,                             /* UUID16: 0xFE95 Xiaomi: 4 bytes */
+    0x0C, 0x16, 0x95, 0xFE, 0x30, 0x58, 0x5B, 0x04,    /* Service data: 13 bytes */
+    0xDE, 0xA7, 0x13, 0xD1, 0x0C,
+    0x09, 0x09, 'L','Y','W','S','D','0','3',            /* Name "LYWSD03": 9 bytes */
+};                                                     /* Total: 31 bytes */
 
 void app_main(void)
 {
@@ -48,7 +48,7 @@ void app_main(void)
     filter_add_rule(&eng, FILTER_TYPE_NAME, "LYWSD*", 0);
 
     bool pass1 = filter_evaluate(&eng, &report);
-    printf("\nFilter 'LYWSD*' on LYWSD03MMC: %s\n", pass1 ? "PASS" : "SUPPRESSED");
+    printf("\nFilter 'LYWSD*' on LYWSD03: %s\n", pass1 ? "PASS" : "SUPPRESSED");
 
     /* Test with a different device */
     proto_adv_report_t other;

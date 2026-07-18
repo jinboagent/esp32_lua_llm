@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include "proto_if.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * BLE Advertisement Filter Engine Interface
  *
@@ -99,3 +103,7 @@ bool filter_evaluate(const filter_engine_t *eng,
  * @return Number of active rules, or -1 if eng is NULL.
  */
 int filter_get_count(const filter_engine_t *eng);
+
+#ifdef __cplusplus
+}
+#endif
