@@ -490,3 +490,117 @@ idf.py menuconfig
 | **Wireshark + Ubertooth** | Capture BLE packets from the air |
 | **ESP-IDF BLE examples** | Reference implementations for NimBLE |
 | **btlejack** | BLE sniffer firmware for nRF52 dongles |
+
+---
+
+## 11. Toolchains and Cross-Compilation
+
+**Why:** Understanding toolchains is essential for embedded development. You write code on one machine (PC) but it runs on a different processor (ESP32).
+
+**Context:** We use two toolchains in this project — MinGW gcc for host-side testing and xtensa-esp32s3-elf-gcc for ESP32 firmware.
+
+### What to learn
+- What a toolchain is: compiler + assembler + linker + utilities
+- Cross-compilation: compiling on one architecture for a different architecture
+- Why you can't mix toolchains: x86_64 code won't run on Xtensa and vice versa
+- Toolchain naming convention: `<arch>-<vendor>-<os>-<abi>-gcc`
+- ESP-IDF toolchain: `xtensa-esp32s3-elf-gcc` (Xtensa architecture, ESP32-S3 target)
+
+### Key Concepts
+```
+Your PC (x86_64)                    ESP32-S3 (Xtensa LX7)
+┌─────────────┐                     ┌─────────────┐
+│ MinGW gcc    │ ──► test.exe       │ xtensa-gcc   │ ──► firmware.bin
+│ (native)     │   runs on PC       │ (cross)      │   runs on ESP32
+└─────────────┘                     └─────────────┘
+Same .c files, different toolchains, different outputs
+```
+
+### Resources
+- [GCC Cross-Compilation Howto](https://gcc.gnu.org/wiki/How-to-cross-compile-GCC)
+- [ESP-IDF Toolchain docs](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-guides/toolchain.html)
+
+---
+
+## 12. CMake Build System
+
+**Why:** CMake generates the build instructions that tell the compiler what to do. Both our host tests and ESP32 firmware use CMake, but with different configurations.
+
+**Context:** We have two CMakeLists.txt files — one for host tests (standard cmake) and one for ESP32 (ESP-IDF cmake with special functions).
+
+### What to learn
+- CMake is a build system GENERATOR — it doesn't compile, it creates build files
+- `CMakeLists.txt` = input (you write), `build/` = output (generated)
+- `idf_component_register()` — ESP-IDF's special cmake function for components
+- Why `build/` is disposable: delete it and `idf.py build` recreates everything
+- Input files (tracked in git): `CMakeLists.txt`, `sdkconfig.defaults`, `partitions.csv`
+- Output files (gitignored): `build/`, `sdkconfig`, `*.bin`, `*.elf`, `*.o`
+
+### Key Distinction
+```
+INPUT (you write)              OUTPUT (build generates)
+─────────────────              ────────────────────────
+CMakeLists.txt                 build/ble_sniffer.bin
+sdkconfig.defaults             build/config/sdkconfig.h
+partitions.csv                 build/partition_table/partition-table.bin
+main/main.c                    build/esp-idf/*/lib*.a
+firmware/components/*/*.c      build/bootloader/bootloader.bin
+```
+
+### Resources
+- [ESP-IDF Build System](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-guides/build-system.html)
+- [CMake Tutorial](https://cmake.org/cmake/help/latest/guide/tutorial/index.html)
+
+---
+
+## 13. USB JTAG Debugging
+
+**Why:** When printf isn't enough, JTAG lets you pause the CPU, inspect variables, and step through code line by line. Essential for debugging crashes and complex logic bugs.
+
+**Context:** Our ESP32-S3-DevKitC-1 has built-in USB JTAG. We haven't used it yet — serial monitor is sufficient for now. We'll need it for Stage 2 (BLE scan) and Stage 3 (Lua engine).
+
+### What to learn
+- JTAG vs serial monitor: JTAG can pause CPU and inspect memory; serial only reads text output
+- When to use JTAG: crashes with no output, memory corruption, timing bugs, logic errors
+- OpenOCD: the JTAG debug server (already installed with ESP-IDF)
+- GDB: the debugger that connects to OpenOCD
+- ESP32-S3 USB JTAG config: `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`
+
+### Serial Monitor vs JTAG
+```
+Serial Monitor:                    JTAG Debugging:
+printf() → read text               Pause CPU → inspect ALL memory
+After code runs                    While code is running
+Can't stop execution               Hit breakpoints, step line by line
+Can't change values                Modify variables while paused
+```
+
+### Resources
+- [ESP-IDF JTAG Debugging](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-guides/jtag-debugging/index.html)
+- [ESP32-S3 USB JTAG setup](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-guides/usb.html)
+
+---
+
+## 14. tmux Workflow for ESP32 Development
+
+**Why:** Organizing build/flash/monitor in tmux windows gives you live visibility into everything the AI agent is doing.
+
+**Context:** We set up a tmux session `build_infor` that runs PowerShell. The AI agent sends commands via `wsl tmux send-keys` and reads output via `wsl tmux capture-pane`.
+
+### What to learn
+- tmux basics: sessions, windows, panes
+- How to send commands: `tmux send-keys -t <session> "command" Enter`
+- How to read output: `tmux capture-pane -t <session> -p -S -N`
+- Stopping interactive programs: `Ctrl+]` for idf.py monitor
+- Build scripts: `build.bat`, `flash.bat`, `monitor.bat` in project root
+
+### Recommended tmux Layout
+```
+Window 0: Serial Monitor (screen /dev/ttyS12 115200)
+Window 1: Build & Flash (.\build.bat, .\flash.bat)
+Window 2: Code browsing (vim, less, cat)
+```
+
+### Resources
+- [tmux cheat sheet](https://tmuxcheatsheet.com/)
+- Project file: `harness/00-global-context/build_environment.md`
