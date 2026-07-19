@@ -115,3 +115,30 @@ BLE radio → NimBLE scan callback → copy raw ADV → FreeRTOS queue
 | USB | USB-Serial/JTAG peripheral (USB CDC) |
 | Clock | 240 MHz dual-core Xtensa LX7 |
 | Power | USB bus-powered (~500 mA max) |
+
+## Library Reuse Policy (MANDATORY)
+
+Before designing ANY new module, the following ESP-IDF built-in components
+MUST be evaluated for reuse. Only write custom code if:
+1. The component does not exist in ESP-IDF or a well-known OSS project
+2. The existing component cannot meet a hard requirement (state why)
+3. The existing component's license is incompatible
+
+### ESP-IDF Components — Always Check First
+| Need | Existing Solution | Use It? |
+|------|-------------------|---------|
+| JSON encoding/decoding | `cJSON` (built-in) | ✅ Yes — replaces custom json_encoder.c |
+| CLI commands | `esp_console` + `argtable3` (built-in) | ✅ Yes — replaces custom CLI parser |
+| BLE AD parsing | NimBLE `ble_hs_adv_parse_fields()` | ✅ Yes — replaces custom proto_adv_parse.c |
+| Filesystem | LittleFS (built-in) | Thin wrapper OK |
+| USB CDC | TinyUSB (built-in) | Thin wrapper OK |
+| Power management | `esp_pm` framework | ✅ Yes — use standard API |
+| Scripting engine | No suitable built-in | ✅ Custom (Lua 5.4) |
+
+### Redesign Required
+The following custom modules should be **replaced** with ESP-IDF built-ins:
+- `proto_adv_parse.c` → NimBLE `ble_hs_adv_parse_fields()`
+- `json_encoder.c` → cJSON
+- CLI (Stage 4) → `esp_console`
+
+See `design_patch.md` for the full analysis and `status/status-2026-07-19-1400.md` for the current state.
