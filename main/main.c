@@ -7,20 +7,18 @@
 #include "json_if.h"
 #include "filter_if.h"
 
-/* Hardcoded Xiaomi temperature sensor advertisement (31 bytes = legacy BLE max) */
+/* Test advertisement: flags + UUID16 (Xiaomi) + name "LYWSD03" */
 static const uint8_t xiaomi_adv[] = {
-    0x02, 0x01, 0x06,                                   /* Flags: 3 bytes */
-    0x03, 0x03, 0x95, 0xFE,                             /* UUID16: 0xFE95 Xiaomi: 4 bytes */
-    0x0C, 0x16, 0x95, 0xFE, 0x30, 0x58, 0x5B, 0x04,    /* Service data: 13 bytes */
-    0xDE, 0xA7, 0x13, 0xD1, 0x0C,
-    0x09, 0x09, 'L','Y','W','S','D','0','3',            /* Name "LYWSD03": 9 bytes */
-};                                                     /* Total: 31 bytes */
+    0x02, 0x01, 0x06,                       /* Flags: LE General Discoverable */
+    0x03, 0x03, 0x95, 0xFE,                 /* UUID16: 0xFE95 (Xiaomi) */
+    0x08, 0x09, 'L','Y','W','S','D','0','3' /* Complete Name: "LYWSD03" */
+};
 
 void app_main(void)
 {
-    printf("\n=== BLE Sniffer Dongle — Module Demo ===\n\n");
+    printf("\n=== BLE Sniffer Dongle - Module Demo ===\n\n");
 
-    /* --- 1. Parse advertisement --- */
+    /* 1. Parse advertisement using NimBLE ble_hs_adv_parse_fields() */
     proto_adv_report_t report;
     int ret = proto_parse_adv_data(xiaomi_adv, sizeof(xiaomi_adv), &report);
     if (ret != 0) {
@@ -30,7 +28,7 @@ void app_main(void)
     printf("Parse OK: name=%s, uuids=%d, has_manu=%d\n",
            report.name, report.uuid16_count, report.has_manu);
 
-    /* --- 2. Encode as JSON --- */
+    /* 2. Encode as JSON using cJSON */
     char json_buf[JSON_LINE_MAX_LEN];
     uint16_t json_len = 0;
     ret = json_encode_adv(&report, json_buf, sizeof(json_buf), &json_len);
@@ -40,17 +38,15 @@ void app_main(void)
     }
     printf("\nJSON output:\n%s\n", json_buf);
 
-    /* --- 3. Filter test --- */
+    /* 3. Filter tests */
     filter_engine_t eng;
     filter_init(&eng);
 
-    /* Add name filter: only pass "LYWSD*" */
     filter_add_rule(&eng, FILTER_TYPE_NAME, "LYWSD*", 0);
 
     bool pass1 = filter_evaluate(&eng, &report);
     printf("\nFilter 'LYWSD*' on LYWSD03: %s\n", pass1 ? "PASS" : "SUPPRESSED");
 
-    /* Test with a different device */
     proto_adv_report_t other;
     proto_report_init(&other);
     strcpy(other.name, "RandomSpeaker");
@@ -60,7 +56,7 @@ void app_main(void)
     bool pass2 = filter_evaluate(&eng, &other);
     printf("Filter 'LYWSD*' on RandomSpeaker: %s\n", pass2 ? "PASS" : "SUPPRESSED");
 
-    /* --- 4. Combined filter: name AND RSSI --- */
+    /* 4. Combined filter: name AND RSSI */
     filter_clear(&eng);
     filter_add_rule(&eng, FILTER_TYPE_NAME, "LYWSD*", 0);
     filter_add_rule(&eng, FILTER_TYPE_RSSI, NULL, -50);

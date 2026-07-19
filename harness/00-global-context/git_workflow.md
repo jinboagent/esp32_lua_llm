@@ -273,6 +273,6 @@ main ─────────────────────────
 ```
 
 - Squash-merge to keep `main` history clean (one commit per feature).
-- Delete feature branch after merge.
+- Dont need Delete feature branch after merge. keep the feature branch so we can revert if needed.
 - Never force-push `main`.
 - Never commit directly to `main`.
