@@ -6,75 +6,108 @@
 #include "proto_if.h"
 #include "json_if.h"
 #include "filter_if.h"
+#include "usb_if.h"
+#include "storage_if.h"
 
-/* Test advertisement: flags + UUID16 (Xiaomi) + name "LYWSD03" */
-static const uint8_t xiaomi_adv[] = {
-    0x02, 0x01, 0x06,                       /* Flags: LE General Discoverable */
-    0x03, 0x03, 0x95, 0xFE,                 /* UUID16: 0xFE95 (Xiaomi) */
-    0x08, 0x09, 'L','Y','W','S','D','0','3' /* Complete Name: "LYWSD03" */
-};
+/* Command parser */
+static void process_command(const char *cmd, char *response, uint16_t response_len)
+{
+    if (strcmp(cmd, "STATUS") == 0) {
+        snprintf(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"status\",\"scanning\":false,"
+            "\"filter_count\":0,\"script_loaded\":false,\"script_running\":false}");
+    }
+    else if (strcmp(cmd, "VERSION") == 0) {
+        snprintf(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"version\",\"firmware\":\"0.1.0\","
+            "\"build_date\":\"%s\",\"chip\":\"esp32s3\"}", __DATE__);
+    }
+    else if (strncmp(cmd, "SCAN ", 5) == 0) {
+        const char *action = cmd + 5;
+        if (strcmp(action, "START") == 0) {
+            snprintf(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"scan_start\"}");
+        }
+        else if (strcmp(action, "STOP") == 0) {
+            snprintf(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"scan_stop\"}");
+        }
+        else {
+            snprintf(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan\",\"msg\":\"unknown action\"}");
+        }
+    }
+    else if (strncmp(cmd, "FILTER ", 7) == 0) {
+        const char *action = cmd + 7;
+        if (strcmp(action, "CLEAR") == 0) {
+            snprintf(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"filter_clear\"}");
+        }
+        else if (strcmp(action, "LIST") == 0) {
+            snprintf(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"filter_list\",\"filters\":[]}");
+        }
+        else {
+            snprintf(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"filter\",\"msg\":\"unknown action\"}");
+        }
+    }
+    else {
+        snprintf(response, response_len,
+            "{\"status\":\"error\",\"msg\":\"unknown command\"}");
+    }
+}
 
 void app_main(void)
 {
-    printf("\n=== BLE Sniffer Dongle - Module Demo ===\n\n");
+    printf("\n=== BLE Sniffer Dongle v0.1.0 ===\n");
+    printf("Type commands (STATUS, VERSION, SCAN START/STOP, FILTER CLEAR/LIST)\n\n");
 
-    /* 1. Parse advertisement using NimBLE ble_hs_adv_parse_fields() */
-    proto_adv_report_t report;
-    int ret = proto_parse_adv_data(xiaomi_adv, sizeof(xiaomi_adv), &report);
-    if (ret != 0) {
-        printf("ERROR: parse failed: %d\n", ret);
-        return;
+    /* Initialize USB console */
+    int ret = usb_console_init();
+    bool usb_ok = (ret == 0);
+    if (!usb_ok) {
+        printf("WARNING: USB console init failed (%d), commands disabled\n", ret);
     }
-    printf("Parse OK: name=%s, uuids=%d, has_manu=%d\n",
-           report.name, report.uuid16_count, report.has_manu);
 
-    /* 2. Encode as JSON using cJSON */
-    char json_buf[JSON_LINE_MAX_LEN];
-    uint16_t json_len = 0;
-    ret = json_encode_adv(&report, json_buf, sizeof(json_buf), &json_len);
+    /* Initialize storage */
+    ret = storage_init();
     if (ret != 0) {
-        printf("ERROR: json encode failed: %d\n", ret);
-        return;
+        printf("WARNING: Storage init failed (%d)\n", ret);
+    } else {
+        uint32_t free_space = 0;
+        storage_get_free_space(&free_space);
+        printf("Storage: %lu bytes free\n", (unsigned long)free_space);
     }
-    printf("\nJSON output:\n%s\n", json_buf);
 
-    /* 3. Filter tests */
-    filter_engine_t eng;
-    filter_init(&eng);
-
-    filter_add_rule(&eng, FILTER_TYPE_NAME, "LYWSD*", 0);
-
-    bool pass1 = filter_evaluate(&eng, &report);
-    printf("\nFilter 'LYWSD*' on LYWSD03: %s\n", pass1 ? "PASS" : "SUPPRESSED");
-
-    proto_adv_report_t other;
-    proto_report_init(&other);
-    strcpy(other.name, "RandomSpeaker");
-    other.has_name = true;
-    other.rssi = -55;
-
-    bool pass2 = filter_evaluate(&eng, &other);
-    printf("Filter 'LYWSD*' on RandomSpeaker: %s\n", pass2 ? "PASS" : "SUPPRESSED");
-
-    /* 4. Combined filter: name AND RSSI */
-    filter_clear(&eng);
-    filter_add_rule(&eng, FILTER_TYPE_NAME, "LYWSD*", 0);
-    filter_add_rule(&eng, FILTER_TYPE_RSSI, NULL, -50);
-
-    bool pass3 = filter_evaluate(&eng, &report);
-    printf("\nCombined filter (name=LYWSD* AND rssi>=-50) on Xiaomi: %s\n",
-           pass3 ? "PASS" : "SUPPRESSED");
-
-    report.rssi = -60;
-    bool pass4 = filter_evaluate(&eng, &report);
-    printf("Combined filter (name=LYWSD* AND rssi>=-50) on Xiaomi rssi=-60: %s\n",
-           pass4 ? "PASS" : "SUPPRESSED");
-
-    printf("\n=== Demo complete. All modules working on ESP32-S3! ===\n");
+    char cmd_buf[USB_RX_BUFFER_SIZE];
+    char response[USB_TX_BUFFER_SIZE];
 
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        printf("Heartbeat: uptime %lu s\n",
-               (unsigned long)(xTaskGetTickCount() / configTICK_RATE_HZ));
+        if (!usb_ok) {
+            /* USB not available, just heartbeat */
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            printf("Heartbeat (USB commands disabled)\n");
+            continue;
+        }
+
+        /* Try to read a command from USB */
+        int line_len = usb_console_read_line(cmd_buf, sizeof(cmd_buf), 1000);
+
+        if (line_len > 0) {
+            /* Got a command */
+            printf("> %s\n", cmd_buf);
+
+            /* Process and respond */
+            process_command(cmd_buf, response, sizeof(response));
+            usb_console_send_json(response);
+            printf("< %s\n", response);
+        }
+        else if (line_len == -503) {
+            /* Timeout - normal, just heartbeat */
+        }
+        else if (line_len < 0) {
+            printf("Read error: %d\n", line_len);
+        }
     }
 }

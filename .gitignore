@@ -8,6 +8,9 @@ tests/host/build/
 sdkconfig
 sdkconfig.old
 
+# ESP-IDF managed components (auto-downloaded by component manager)
+managed_components/
+
 # Compiled binaries
 *.bin
 *.elf
