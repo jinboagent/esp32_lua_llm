@@ -177,6 +177,54 @@ void test_json_encode_valid_json_structure(void)
     TEST_ASSERT_EQUAL_CHAR('\0', buf[len]);
 }
 
+/* --- TC-12: Name with newline/tab/control chars (B1 fix) --- */
+void test_json_encode_name_newline_tab(void)
+{
+    proto_adv_report_t r;
+    memset(&r, 0, sizeof(r));
+    strcpy(r.name, "Dev\nTab\tEnd");
+    r.has_name = true;
+
+    char buf[JSON_LINE_MAX_LEN];
+    int ret = json_encode_adv(&r, buf, sizeof(buf), NULL);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"name\":\"Dev\\nTab\\tEnd\""));
+}
+
+/* --- TC-13: Name with control character < 0x20 (B1 fix) --- */
+void test_json_encode_name_control_char(void)
+{
+    proto_adv_report_t r;
+    memset(&r, 0, sizeof(r));
+    r.name[0] = 'A';
+    r.name[1] = 0x01;
+    r.name[2] = 'B';
+    r.name[3] = '\0';
+    r.has_name = true;
+
+    char buf[JSON_LINE_MAX_LEN];
+    int ret = json_encode_adv(&r, buf, sizeof(buf), NULL);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"name\":\"A\\u01B\""));
+}
+
+/* --- TC-14: Name with backslash (B1 fix) --- */
+void test_json_encode_name_backslash(void)
+{
+    proto_adv_report_t r;
+    memset(&r, 0, sizeof(r));
+    strcpy(r.name, "path\\to");
+    r.has_name = true;
+
+    char buf[JSON_LINE_MAX_LEN];
+    int ret = json_encode_adv(&r, buf, sizeof(buf), NULL);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"name\":\"path\\\\to\""));
+}
+
 int test_json_encoder_main(void);
 int test_json_encoder_main(void)
 {
@@ -192,5 +240,8 @@ int test_json_encoder_main(void)
     RUN_TEST(test_json_encode_name_escaping);
     RUN_TEST(test_json_encode_random_addr);
     RUN_TEST(test_json_encode_valid_json_structure);
+    RUN_TEST(test_json_encode_name_newline_tab);
+    RUN_TEST(test_json_encode_name_control_char);
+    RUN_TEST(test_json_encode_name_backslash);
     return UNITY_END();
 }

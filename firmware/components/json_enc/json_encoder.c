@@ -139,13 +139,31 @@ static int s_encode_mac(char *buf, uint16_t buf_len, const uint8_t addr[6])
 static int s_encode_string_escaped(char *buf, uint16_t buf_len, const char *str)
 {
     uint16_t pos = 0;
-    for (const char *p = str; *p != '\0' && pos + 2 < buf_len; p++) {
-        char c = *p;
-        if (c == '"' || c == '\\') {
-            buf[pos++] = '\\';
-            buf[pos++] = c;
+    for (const char *p = str; *p != '\0'; p++) {
+        unsigned char c = (unsigned char)*p;
+        const char *esc = NULL;
+        char esc_buf[8];
+
+        if (c == '"') { esc = "\\\""; }
+        else if (c == '\\') { esc = "\\\\"; }
+        else if (c == '\n') { esc = "\\n"; }
+        else if (c == '\r') { esc = "\\r"; }
+        else if (c == '\t') { esc = "\\t"; }
+        else if (c == '\b') { esc = "\\b"; }
+        else if (c == '\f') { esc = "\\f"; }
+        else if (c < 0x20) {
+            snprintf(esc_buf, sizeof(esc_buf), "\\u%02x", c);
+            esc = esc_buf;
+        }
+
+        if (esc) {
+            uint16_t esc_len = (uint16_t)strlen(esc);
+            if (pos + esc_len >= buf_len) break;
+            memcpy(buf + pos, esc, esc_len);
+            pos += esc_len;
         } else {
-            buf[pos++] = c;
+            if (pos + 1 >= buf_len) break;
+            buf[pos++] = (char)c;
         }
     }
     buf[pos] = '\0';
@@ -182,7 +200,7 @@ int json_encode_adv(const proto_adv_report_t *report,
     pos += (uint16_t)n;
 
     if (report->has_name) {
-        char escaped_name[PROTO_DEVICE_NAME_MAX_LEN * 2];
+        char escaped_name[PROTO_DEVICE_NAME_MAX_LEN * 6 + 1];
         s_encode_string_escaped(escaped_name, sizeof(escaped_name), report->name);
         n = snprintf(buf + pos, buf_len - pos, ",\"name\":\"%s\"", escaped_name);
     } else {

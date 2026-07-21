@@ -28,6 +28,7 @@ int storage_init(void)
 
     s_mutex = xSemaphoreCreateMutex();
     if (s_mutex == NULL) {
+        esp_vfs_littlefs_unregister("littlefs");
         return -701;
     }
 
@@ -61,11 +62,13 @@ int storage_write_file(const char *path, const uint8_t *data, uint32_t len)
 
     size_t written = fwrite(data, 1, len, f);
     fclose(f);
-    xSemaphoreGive(s_mutex);
 
     if (written != len) {
+        remove(path);
+        xSemaphoreGive(s_mutex);
         return -705;
     }
+    xSemaphoreGive(s_mutex);
     return 0;
 }
 
