@@ -95,6 +95,51 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
                 "\"count\":%d}",
                 filter_get_count(&s_filter_engine));
         }
+        else if (strncmp(action, "ADD ", 4) == 0) {
+            /* FILTER ADD <type> <value> */
+            const char *args = action + 4;
+            char type_str[16] = {0};
+            char value[FILTER_PATTERN_MAX_LEN] = {0};
+            int parsed = sscanf(args, "%15s %31s", type_str, value);
+
+            if (parsed < 2) {
+                snprintf(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"filter_add\","
+                    "\"msg\":\"usage: FILTER ADD <NAME|UUID|MAC|RSSI> <value>\"}");
+            } else {
+                filter_type_t ftype;
+                int8_t rssi_val = 0;
+                if (strcmp(type_str, "NAME") == 0) {
+                    ftype = FILTER_TYPE_NAME;
+                } else if (strcmp(type_str, "UUID") == 0) {
+                    ftype = FILTER_TYPE_UUID;
+                } else if (strcmp(type_str, "MAC") == 0) {
+                    ftype = FILTER_TYPE_MAC;
+                } else if (strcmp(type_str, "RSSI") == 0) {
+                    ftype = FILTER_TYPE_RSSI;
+                    rssi_val = (int8_t)atoi(value);
+                } else {
+                    snprintf(response, response_len,
+                        "{\"status\":\"error\",\"cmd\":\"filter_add\","
+                        "\"msg\":\"unknown type: %s\"}", type_str);
+                    goto filter_done;
+                }
+
+                int ret = filter_add_rule(&s_filter_engine, ftype,
+                    ftype == FILTER_TYPE_RSSI ? NULL : value, rssi_val);
+                if (ret == 0) {
+                    snprintf(response, response_len,
+                        "{\"status\":\"ok\",\"cmd\":\"filter_add\","
+                        "\"type\":\"%s\",\"value\":\"%s\"}",
+                        type_str, value);
+                } else {
+                    snprintf(response, response_len,
+                        "{\"status\":\"error\",\"cmd\":\"filter_add\","
+                        "\"msg\":\"add failed: %d\"}", ret);
+                }
+            }
+            filter_done:;
+        }
         else {
             snprintf(response, response_len,
                 "{\"status\":\"error\",\"cmd\":\"filter\",\"msg\":\"unknown action\"}");
@@ -109,7 +154,7 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
 void app_main(void)
 {
     printf("\n=== BLE Sniffer Dongle v0.2.0 ===\n");
-    printf("Commands: STATUS, VERSION, SCAN START/STOP, FILTER CLEAR/LIST\n\n");
+    printf("Commands: STATUS, VERSION, SCAN START/STOP, FILTER ADD/CLEAR/LIST\n\n");
 
     /* Initialize USB console */
     int ret = usb_console_init();
@@ -142,6 +187,7 @@ void app_main(void)
     if (ret != 0) {
         printf("WARNING: Pipeline init failed (%d)\n", ret);
     }
+    pipeline_set_filter(&s_filter_engine);
 
     printf("Ready. Type SCAN START to begin.\n\n");
 

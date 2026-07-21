@@ -1,6 +1,7 @@
 #include "usb_if.h"
 #include <string.h>
 #include <stdio.h>
+#include <fcntl.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -18,6 +19,9 @@ int usb_console_init(void)
     if (s_tx_mutex == NULL) {
         return -500;
     }
+
+    /* Set stdin to non-blocking so getchar() returns EOF when no data */
+    fcntl(0, F_SETFL, O_NONBLOCK);
 
     s_initialized = true;
     return 0;

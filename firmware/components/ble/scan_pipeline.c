@@ -69,9 +69,8 @@ static void s_pipeline_task_func(void *param)
         }
     }
 
-    /* Task is stopping — clean up */
+    /* Task is stopping — delete self (does not return) */
     vTaskDelete(NULL);
-    s_pipeline_task = NULL;
 }
 
 int pipeline_init(void)
@@ -130,7 +129,10 @@ int pipeline_stop(void)
     }
 
     s_running = false;
-    /* Task will exit on its own after current iteration */
+    /* Wait for task to notice s_running=false and exit (max 1 queue timeout + margin) */
+    vTaskDelay(pdMS_TO_TICKS(PIPELINE_QUEUE_TIMEOUT_MS + 50));
+    s_pipeline_task = NULL;
+
     printf("Pipeline: stopped (received=%lu, filtered=%lu, output=%lu, "
            "parse_err=%lu, encode_err=%lu)\n",
            (unsigned long)s_stats.total_received,
@@ -139,6 +141,11 @@ int pipeline_stop(void)
            (unsigned long)s_stats.parse_errors,
            (unsigned long)s_stats.encode_errors);
     return 0;
+}
+
+void pipeline_set_filter(filter_engine_t *eng)
+{
+    s_filter_engine = eng;
 }
 
 int pipeline_get_stats(pipeline_stats_t *stats)

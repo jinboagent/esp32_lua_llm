@@ -92,6 +92,12 @@ int storage_read_file(const char *path, uint8_t *buf, uint32_t buf_len, uint32_t
     long file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
 
+    if (file_size < 0) {
+        fclose(f);
+        xSemaphoreGive(s_mutex);
+        return -706;
+    }
+
     if ((uint32_t)file_size > buf_len) {
         fclose(f);
         xSemaphoreGive(s_mutex);
@@ -101,6 +107,10 @@ int storage_read_file(const char *path, uint8_t *buf, uint32_t buf_len, uint32_t
     size_t read = fread(buf, 1, file_size, f);
     fclose(f);
     xSemaphoreGive(s_mutex);
+
+    if (read != (size_t)file_size) {
+        return -706;
+    }
 
     *out_len = (uint32_t)read;
     return 0;

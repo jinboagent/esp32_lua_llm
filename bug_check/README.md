@@ -30,12 +30,23 @@
 
 6 new issues found after Stage 0 implementation. See `archive/new_bugs_2026-07-19_00-00-58.md` for details.
 
-## Key Open Issues
+## Latest: Stage 0-1 Evaluation (2026-07-21)
 
-- **B4**: NimBLE config missing from sdkconfig.defaults
-- **N4 (Critical)**: USB console `read_line` returns positive length on timeout instead of -503
-- **N5 (Critical)**: VFS leak on storage init partial failure
-- **N6 (Medium)**: Partial write leaves incomplete file
+See [`stage0-1-eval-2026-07-21.md`](stage0-1-eval-2026-07-21.md) — 15 bugs found (4 critical, 5 medium, 6 low) + test coverage analysis.
+
+### Critical New Bugs
+| ID | Description |
+|----|-------------|
+| B1 | Pipeline dead code — `vTaskDelete(NULL)` prevents re-init |
+| B2 | Filter engine never connected to pipeline (filtering non-functional) |
+| B3 | `ESP_ERROR_CHECK(nvs_flash_erase())` calls abort() on failure |
+| B4 | `getchar()` blocks — USB read timeout logic doesn't work |
+
+### Key Open Issues (from previous evaluations)
+
+- **B4 (old)**: NimBLE config missing from sdkconfig.defaults
+- **N5 (old, fixed?)**: VFS leak on storage init partial failure — appears fixed in current code
+- **N6 (old)**: Partial write leaves incomplete file
 
 ## Archive
 

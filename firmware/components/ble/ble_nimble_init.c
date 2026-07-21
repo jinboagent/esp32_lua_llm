@@ -46,7 +46,11 @@ int ble_init(void)
     /* Initialize NVS — required for PHY calibration data */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
+        esp_err_t erase_err = nvs_flash_erase();
+        if (erase_err != ESP_OK) {
+            printf("BLE: NVS erase failed: %s\n", esp_err_to_name(erase_err));
+            return -1;
+        }
         ret = nvs_flash_init();
     }
     if (ret != ESP_OK) {

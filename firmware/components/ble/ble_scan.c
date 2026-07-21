@@ -99,12 +99,14 @@ int ble_scan_start(void)
         return -411;
     }
 
-    /* Create queue if not exists */
+    /* Create queue if not exists, otherwise drain stale entries */
     if (s_scan_queue == NULL) {
         s_scan_queue = xQueueCreate(BLE_SCAN_QUEUE_DEPTH, sizeof(adv_report_raw_t));
         if (s_scan_queue == NULL) {
             return -1;
         }
+    } else {
+        xQueueReset(s_scan_queue);
     }
 
     /* Clear dedup table */

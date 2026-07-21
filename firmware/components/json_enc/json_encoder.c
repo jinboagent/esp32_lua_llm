@@ -152,7 +152,7 @@ static int s_encode_string_escaped(char *buf, uint16_t buf_len, const char *str)
         else if (c == '\b') { esc = "\\b"; }
         else if (c == '\f') { esc = "\\f"; }
         else if (c < 0x20) {
-            snprintf(esc_buf, sizeof(esc_buf), "\\u%02x", c);
+            snprintf(esc_buf, sizeof(esc_buf), "\\u%02X", c);
             esc = esc_buf;
         }
 

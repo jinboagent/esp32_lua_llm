@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "filter_if.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,6 +59,7 @@ int  ble_scan_get_report(adv_report_raw_t *out, uint32_t timeout_ms);
 int  pipeline_init(void);
 int  pipeline_start(void);
 int  pipeline_stop(void);
+void pipeline_set_filter(filter_engine_t *eng);
 int  pipeline_get_stats(pipeline_stats_t *stats);
 
 #ifdef __cplusplus

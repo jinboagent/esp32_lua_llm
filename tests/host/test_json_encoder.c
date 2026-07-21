@@ -207,7 +207,7 @@ void test_json_encode_name_control_char(void)
     int ret = json_encode_adv(&r, buf, sizeof(buf), NULL);
 
     TEST_ASSERT_EQUAL_INT(0, ret);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"name\":\"A\\u01B\""));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"name\":\"A\\u01B\""));  /* \u01 = uppercase hex */
 }
 
 /* --- TC-14: Name with backslash (B1 fix) --- */
