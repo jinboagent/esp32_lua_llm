@@ -44,7 +44,8 @@ Each module defines its specific codes within its range. Example:
 
 ## 2. Memory Rules
 
-- **No malloc/free.** All buffers are statically allocated at compile time.
+- **Application code**: prefer static allocation. Avoid direct malloc/free in business logic.
+- **Libraries (cJSON, MicroPython, LittleFS, esp_console)**: heap allocation is allowed and expected.
 - **NULL check** every pointer at every module boundary. Return `ERR_NULL_PTR` on failure.
 - **Length check** every buffer write. Never write past the declared size.
 - Use `sizeof(buf)` for stack/static buffers; pass explicit size for function parameters.
@@ -54,13 +55,12 @@ Each module defines its specific codes within its range. Example:
 
 | Buffer | Size | Location |
 |--------|------|----------|
-| USB RX | 256 B | `usb_console` |
-| USB TX | 512 B | `usb_console` |
+| USB RX | 256 B | `usb_if.h` |
+| USB TX | 512 B | `usb_if.h` |
 | BLE ADV raw | 62 B | `proto_if.h` (max AD data per spec) |
 | Device name | 32 B | `proto_if.h` |
-| Lua script max | 8 KB | `lua_engine` |
-| Filter rules max | 16 | `filter_engine` |
-| ADV report queue | 32 entries | FreeRTOS queue BLE → pipeline |
+| Filter rules max | 16 | `filter_if.h` |
+| JSON line max | 512 B | `json_if.h` |
 
 ## 4. Naming Conventions
 
@@ -81,7 +81,7 @@ Module names (lowercase): `adv_parse`, `json_enc`, `filter`, `ble_scan`, `usb_co
 ```
 Layer 4: cli  (user-facing commands)
 Layer 3: pipeline  (orchestration)
-Layer 2: filter | json_enc | lua_eng | littlefs
+Layer 2: filter | json_enc | littlefs
 Layer 1: adv_parse | ble_scan | usb_con
 Layer 0: proto_if  (shared types, no logic)
 ```
@@ -99,23 +99,7 @@ Layer 0: proto_if  (shared types, no logic)
 - No WiFi in v1 (disable WiFi component in sdkconfig)
 - FreeRTOS (SMP disabled for v1; pin tasks to core 0)
 
-## 7. Lua Sandbox
-
-**Allowed libraries:** `string`, `table`, `math`, `utf8`
-
-**Denied libraries:** `os`, `io`, `debug`, `package`, `coroutine`
-
-| Constraint | Value |
-|------------|-------|
-| Execution timeout | 10 ms per script invocation |
-| Memory limit | 32 KB (no PSRAM) / 128 KB (with PSRAM) |
-| Coroutines | Disabled |
-| Max script size | 8 KB |
-| C functions exposed | `filter_match`, `log_info`, `log_debug` |
-
-The Lua state is created once at init. Scripts are loaded from LittleFS or received via USB CDC. On timeout the Lua state is reset and the report is passed through unmodified.
-
-## 8. Filter Logic
+## 7. Filter Logic
 
 - **AND** between different filter types (MAC, name, RSSI, UUID, manufacturer ID, AD type).
 - **OR** within the same filter type (multiple MAC rules: match any).
@@ -123,7 +107,7 @@ The Lua state is created once at init. Scripts are loaded from LittleFS or recei
 - Empty filter set = pass all.
 - Filter evaluation is short-circuit: first failing type stops evaluation.
 
-## 9. Concurrency
+## 8. Concurrency
 
 Three FreeRTOS tasks:
 
@@ -134,76 +118,30 @@ Three FreeRTOS tasks:
 | USB CLI | 5 (lowest) | 0 | Read USB RX, parse commands, send responses |
 
 Rules:
-- BLE scan callback must **copy only** — no processing, no logging, no blocking. Copy raw data into a `proto_adv_report_t` and send to FreeRTOS queue.
+- BLE scan callback must **copy only** — no processing, no logging, no blocking.
 - Queue depth: 32 entries. If full, increment drop counter and return.
-- Mutex for shared resources (filter rule table, Lua state, LittleFS).
+- Mutex for shared resources (filter rule table, LittleFS).
 - Pipeline task owns the JSON encoder output buffer.
 
-## 10. Fault Isolation
+## 9. Fault Isolation
 
 - Every function return code is checked by the caller.
-- Const pointers (`const proto_adv_report_t *`) used for read-only inter-module data.
+- Const pointers used for read-only inter-module data.
 - Input validation at every module boundary (NULL, size, range).
 - Task watchdog timeout: 5 seconds. Each task must feed the watchdog in its main loop.
-- On Lua timeout or memory error: reset Lua state, log error, continue pipeline with C filter only.
 - On queue full: increment drop counter, do not block the BLE task.
 
-## 11. Inter-Module Data
+## 10. Inter-Module Data
 
-All modules share a single report type defined in `proto_if.h`:
+All modules share `proto_adv_report_t` defined in `interfaces/proto_if.h` (parsed AD fields: addr, name, UUIDs, manufacturer data, RSSI, etc.). Reports are passed as **read-only const pointers** between modules. Buffers are **caller-owned**.
 
-```c
-typedef struct {
-    uint8_t  addr[6];          /* BLE address (public or random) */
-    uint8_t  addr_type;        /* 0=public, 1=random */
-    int8_t   rssi;
-    uint8_t  adv_type;         /* 0=ADV_IND, etc. */
-    uint8_t  adv_data[62];     /* raw AD structures */
-    uint8_t  adv_data_len;
-    uint32_t timestamp_ms;     /* uptime ms at reception */
-} proto_adv_report_t;
-```
-
-- Reports are passed as **read-only const pointers** between modules.
-- Buffers are **caller-owned**: the pipeline task allocates the report on dequeue and owns its lifetime.
-- No module modifies a report it did not create.
-
-## 12. BLE Scan Defaults
-
-| Parameter | Default | Range |
-|-----------|---------|-------|
-| Scan interval | 100 ms | 10 ms – 10240 ms |
-| Scan window | 50 ms | 10 ms – 10240 ms |
-| Scan type | Passive | Passive only (v1) |
-| PHY | 1M | 1M only (v1) |
-| Dedup | 1 per MAC per second | Configurable: off, 1/s, 5/s |
-
-Window must be <= interval. Enforced at config time.
-
-## 13. State Machine
-
-```
-  +-------+    scan_start     +-----------+    script_load    +---------------+
-  | IDLE  |------------------>| SCANNING  |------------------>| SCRIPT_RUNNING |
-  +-------+<------------------+-----------+<------------------+---------------+
-             scan_stop           script_unload     scan_stop / script_unload
-```
-
-| State | Allowed operations |
-|-------|--------------------|
-| IDLE | `scan_start`, `config_set`, `script_load`, `filter_add`, `filter_clear`, `stats_get` |
-| SCANNING | `scan_stop`, `filter_add`, `filter_clear`, `stats_get`, `script_load` |
-| SCRIPT_RUNNING | `scan_stop`, `script_unload`, `filter_add`, `filter_clear`, `stats_get` |
-
-Invalid transitions return `ERR_INVALID_STATE` (common -2 extended, or module-specific).
-
-## 14. Byte Order
+## 11. Byte Order
 
 - UUIDs: big-endian hex strings, e.g., `"180A"` (UUID16), `"0000180A-0000-1000-8000-00805F9B34FB"` (UUID128).
 - Manufacturer ID: big-endian hex, e.g., `"004C"` (Apple).
 - MAC address: big-endian hex with colons, e.g., `"AA:BB:CC:DD:EE:FF"`.
 
-## 15. Logging
+## 12. Logging
 
 - Use ESP-IDF logging macros: `ESP_LOGE`, `ESP_LOGW`, `ESP_LOGI`, `ESP_LOGD`.
 - Each module defines its own tag: `static const char *TAG = "ADV_PARSE";`
