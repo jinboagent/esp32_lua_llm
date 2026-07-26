@@ -9,6 +9,7 @@
 #include "usb_if.h"
 #include "storage_if.h"
 #include "ble_if.h"
+#include "lua_if.h"
 
 /* Global filter engine (shared between CLI and pipeline) */
 static filter_engine_t s_filter_engine;
@@ -23,12 +24,12 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
             "{\"status\":\"ok\",\"cmd\":\"status\","
             "\"scanning\":%s,"
             "\"filter_count\":%d,"
-            "\"script_loaded\":false,"
-            "\"script_running\":false,"
+            "\"lua_ready\":%s,"
             "\"pipeline\":{\"received\":%lu,\"filtered\":%lu,"
             "\"output\":%lu,\"parse_err\":%lu,\"encode_err\":%lu}}",
             ble_scan_is_active() ? "true" : "false",
             filter_get_count(&s_filter_engine),
+            lua_engine_is_ready() ? "true" : "false",
             (unsigned long)stats.total_received,
             (unsigned long)stats.total_filtered,
             (unsigned long)stats.total_output,
@@ -37,7 +38,7 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
     }
     else if (strcmp(cmd, "VERSION") == 0) {
         snprintf(response, response_len,
-            "{\"status\":\"ok\",\"cmd\":\"version\",\"firmware\":\"0.2.0\","
+            "{\"status\":\"ok\",\"cmd\":\"version\",\"firmware\":\"0.3.0\","
             "\"build_date\":\"%s\",\"chip\":\"esp32s3\"}", __DATE__);
     }
     else if (strncmp(cmd, "SCAN ", 5) == 0) {
@@ -145,6 +146,57 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
                 "{\"status\":\"error\",\"cmd\":\"filter\",\"msg\":\"unknown action\"}");
         }
     }
+    else if (strncmp(cmd, "LUA ", 4) == 0) {
+        const char *action = cmd + 4;
+        if (strncmp(action, "EXEC ", 5) == 0) {
+            const char *script = action + 5;
+            if (!lua_engine_is_ready()) {
+                snprintf(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"lua_exec\","
+                    "\"msg\":\"Lua engine not initialized\"}");
+            } else {
+                char lua_result[LUA_RESULT_MAX_LEN] = {0};
+                int ret = lua_engine_exec(script, lua_result, sizeof(lua_result));
+                if (ret == 0) {
+                    snprintf(response, response_len,
+                        "{\"status\":\"ok\",\"cmd\":\"lua_exec\","
+                        "\"result\":\"%s\"}", lua_result);
+                } else {
+                    snprintf(response, response_len,
+                        "{\"status\":\"error\",\"cmd\":\"lua_exec\","
+                        "\"code\":%d,\"msg\":\"%s\"}",
+                        ret, lua_result[0] ? lua_result : "exec failed");
+                }
+            }
+        }
+        else if (strcmp(action, "INIT") == 0) {
+            int ret = lua_engine_init();
+            if (ret == 0) {
+                snprintf(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"lua_init\"}");
+            } else {
+                snprintf(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"lua_init\","
+                    "\"code\":%d}", ret);
+            }
+        }
+        else if (strcmp(action, "DEINIT") == 0) {
+            int ret = lua_engine_deinit();
+            if (ret == 0) {
+                snprintf(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"lua_deinit\"}");
+            } else {
+                snprintf(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"lua_deinit\","
+                    "\"code\":%d}", ret);
+            }
+        }
+        else {
+            snprintf(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua\","
+                "\"msg\":\"usage: LUA EXEC|INIT|DEINIT\"}");
+        }
+    }
     else {
         snprintf(response, response_len,
             "{\"status\":\"error\",\"msg\":\"unknown command\"}");
@@ -153,8 +205,8 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
 
 void app_main(void)
 {
-    printf("\n=== BLE Sniffer Dongle v0.2.0 ===\n");
-    printf("Commands: STATUS, VERSION, SCAN START/STOP, FILTER ADD/CLEAR/LIST\n\n");
+    printf("\n=== BLE Sniffer Dongle v0.3.0 ===\n");
+    printf("Commands: STATUS, VERSION, SCAN START/STOP, FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/DEINIT\n\n");
 
     /* Initialize USB console */
     int ret = usb_console_init();
@@ -188,6 +240,12 @@ void app_main(void)
         printf("WARNING: Pipeline init failed (%d)\n", ret);
     }
     pipeline_set_filter(&s_filter_engine);
+
+    /* Initialize Lua engine */
+    ret = lua_engine_init();
+    if (ret != 0) {
+        printf("WARNING: Lua engine init failed (%d)\n", ret);
+    }
 
     printf("Ready. Type SCAN START to begin.\n\n");
 
