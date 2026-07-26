@@ -26,7 +26,12 @@ static void s_pipeline_task_func(void *param)
     char json_buf[JSON_LINE_MAX_LEN];
     uint16_t json_len = 0;
 
-    while (s_running) {
+    for (;;) {
+        if (!s_running) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
         /* 1. Get raw report from BLE scan queue */
         int ret = ble_scan_get_report(&raw, PIPELINE_QUEUE_TIMEOUT_MS);
         if (ret != 0) {
@@ -69,7 +74,7 @@ static void s_pipeline_task_func(void *param)
         }
     }
 
-    /* Task is stopping — delete self (does not return) */
+    /* Safety: FreeRTOS tasks must never return */
     vTaskDelete(NULL);
 }
 
@@ -83,7 +88,7 @@ int pipeline_init(void)
     s_running = false;
     s_filter_engine = NULL;
 
-    /* Create task in suspended state (not running yet) */
+    /* Create task — runs forever, idles when s_running == false */
     BaseType_t ret = xTaskCreatePinnedToCore(
         s_pipeline_task_func,
         "pipeline",
@@ -99,8 +104,6 @@ int pipeline_init(void)
         return -1;
     }
 
-    /* Suspend until pipeline_start() is called */
-    vTaskSuspend(s_pipeline_task);
     return 0;
 }
 
@@ -114,7 +117,6 @@ int pipeline_start(void)
     }
 
     s_running = true;
-    vTaskResume(s_pipeline_task);
     printf("Pipeline: started\n");
     return 0;
 }
@@ -129,9 +131,6 @@ int pipeline_stop(void)
     }
 
     s_running = false;
-    /* Wait for task to notice s_running=false and exit (max 1 queue timeout + margin) */
-    vTaskDelay(pdMS_TO_TICKS(PIPELINE_QUEUE_TIMEOUT_MS + 50));
-    s_pipeline_task = NULL;
 
     printf("Pipeline: stopped (received=%lu, filtered=%lu, output=%lu, "
            "parse_err=%lu, encode_err=%lu)\n",
