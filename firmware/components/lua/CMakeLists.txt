@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "lua_port.c"
+        "script_mgmt.c"
         "src/lapi.c"
         "src/lauxlib.c"
         "src/lbaselib.c"
@@ -34,7 +35,7 @@ idf_component_register(
         "src/lvm.c"
         "src/lzio.c"
     INCLUDE_DIRS "include" "${CMAKE_SOURCE_DIR}/interfaces"
-    REQUIRES ""
+    REQUIRES "storage"
 )
 
 # Lua is pure C99, no POSIX dependencies

@@ -10,6 +10,7 @@
 #include "storage_if.h"
 #include "ble_if.h"
 #include "lua_if.h"
+#include "script_if.h"
 
 /* Global filter engine (shared between CLI and pipeline) */
 static filter_engine_t s_filter_engine;
@@ -25,11 +26,15 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
             "\"scanning\":%s,"
             "\"filter_count\":%d,"
             "\"lua_ready\":%s,"
+            "\"script_loaded\":%s,"
+            "\"script_running\":%s,"
             "\"pipeline\":{\"received\":%lu,\"filtered\":%lu,"
             "\"output\":%lu,\"parse_err\":%lu,\"encode_err\":%lu}}",
             ble_scan_is_active() ? "true" : "false",
             filter_get_count(&s_filter_engine),
             lua_engine_is_ready() ? "true" : "false",
+            script_is_loaded() ? "true" : "false",
+            script_is_running() ? "true" : "false",
             (unsigned long)stats.total_received,
             (unsigned long)stats.total_filtered,
             (unsigned long)stats.total_output,
@@ -197,6 +202,79 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
                 "\"msg\":\"usage: LUA EXEC|INIT|DEINIT\"}");
         }
     }
+    else if (strncmp(cmd, "SCRIPT ", 7) == 0) {
+        const char *action = cmd + 7;
+        if (strcmp(action, "BEGIN") == 0) {
+            int ret = script_upload_begin();
+            if (ret == 0) {
+                snprintf(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"script_begin\"}");
+            } else {
+                snprintf(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"script_begin\","
+                    "\"code\":%d}", ret);
+            }
+        }
+        else if (strncmp(action, "CHUNK ", 6) == 0) {
+            /* SCRIPT CHUNK <hex_data> */
+            const char *hex = action + 6;
+            uint8_t chunk_buf[512];
+            uint16_t chunk_len = 0;
+            for (const char *p = hex; *p && *(p+1) && chunk_len < sizeof(chunk_buf); p += 2) {
+                char byte_str[3] = {p[0], p[1], '\0'};
+                chunk_buf[chunk_len++] = (uint8_t)strtol(byte_str, NULL, 16);
+            }
+            int ret = script_upload_chunk(chunk_buf, chunk_len);
+            if (ret == 0) {
+                snprintf(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"script_chunk\","
+                    "\"bytes\":%d}", chunk_len);
+            } else {
+                snprintf(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"script_chunk\","
+                    "\"code\":%d}", ret);
+            }
+        }
+        else if (strcmp(action, "END") == 0) {
+            int ret = script_upload_end();
+            if (ret == 0) {
+                snprintf(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"script_end\"}");
+            } else {
+                snprintf(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"script_end\","
+                    "\"code\":%d}", ret);
+            }
+        }
+        else if (strcmp(action, "RUN") == 0) {
+            int ret = script_run();
+            if (ret == 0) {
+                snprintf(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"script_run\"}");
+            } else {
+                snprintf(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"script_run\","
+                    "\"code\":%d}", ret);
+            }
+        }
+        else if (strcmp(action, "STOP") == 0) {
+            script_stop();
+            snprintf(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"script_stop\"}");
+        }
+        else if (strcmp(action, "STATUS") == 0) {
+            snprintf(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"script_status\","
+                "\"loaded\":%s,\"running\":%s}",
+                script_is_loaded() ? "true" : "false",
+                script_is_running() ? "true" : "false");
+        }
+        else {
+            snprintf(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"script\","
+                "\"msg\":\"usage: SCRIPT RUN|STOP|STATUS\"}");
+        }
+    }
     else {
         snprintf(response, response_len,
             "{\"status\":\"error\",\"msg\":\"unknown command\"}");
@@ -206,7 +284,7 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
 void app_main(void)
 {
     printf("\n=== BLE Sniffer Dongle v0.3.0 ===\n");
-    printf("Commands: STATUS, VERSION, SCAN START/STOP, FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/DEINIT\n\n");
+    printf("Commands: STATUS, VERSION, SCAN START/STOP, FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/DEINIT, SCRIPT RUN/STOP/STATUS\n\n");
 
     /* Initialize USB console */
     int ret = usb_console_init();

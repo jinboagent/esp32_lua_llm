@@ -77,6 +77,42 @@ int lua_engine_exec(const char *script, char *result, uint16_t result_len);
  */
 bool lua_engine_is_ready(void);
 
+/*
+ * Check if a Lua global function exists.
+ *
+ * @param name  Function name (null-terminated).
+ * @return 1 if function exists, 0 if not, -606 if engine not ready.
+ */
+int lua_engine_has_func(const char *name);
+
+/*
+ * Call a Lua global function: func(addr, rssi, name) → bool
+ * Used for the on_adv hook.
+ *
+ * @param func_name  Lua function name (e.g., "on_adv").
+ * @param addr       BLE address as "AA:BB:CC:DD:EE:FF".
+ * @param rssi       RSSI in dBm.
+ * @param name       Device name (may be NULL).
+ * @return 1 = pass (true), 0 = suppress (false), -1 = function not defined,
+ *         negative error code on failure.
+ */
+int lua_engine_call_on_adv(const char *func_name, const char *addr,
+                           int8_t rssi, const char *name);
+
+/*
+ * Call a Lua global function: func(addr, json) → string
+ * Used for the transform hook.
+ *
+ * @param func_name  Lua function name (e.g., "transform").
+ * @param addr       BLE address string.
+ * @param json_in    Default JSON string from encoder.
+ * @param json_out   Output buffer for transformed JSON.
+ * @param out_len    Size of output buffer.
+ * @return 0 on success, -1 = function not defined, negative error code on failure.
+ */
+int lua_engine_call_transform(const char *func_name, const char *addr,
+                              const char *json_in, char *json_out, uint16_t out_len);
+
 #ifdef __cplusplus
 }
 #endif

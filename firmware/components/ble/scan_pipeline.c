@@ -3,6 +3,8 @@
 #include "json_if.h"
 #include "filter_if.h"
 #include "usb_if.h"
+#include "lua_if.h"
+#include "script_if.h"
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -19,11 +21,18 @@ static pipeline_stats_t s_stats;
 /* Optional filter engine (set externally, not owned by pipeline) */
 static filter_engine_t *s_filter_engine = NULL;
 
+static void s_format_addr(const uint8_t *addr, char *buf, uint8_t buf_len)
+{
+    snprintf(buf, buf_len, "%02X:%02X:%02X:%02X:%02X:%02X",
+             addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+}
+
 static void s_pipeline_task_func(void *param)
 {
     adv_report_raw_t raw;
     proto_adv_report_t parsed;
     char json_buf[JSON_LINE_MAX_LEN];
+    char addr_str[18]; /* "AA:BB:CC:DD:EE:FF\0" */
     uint16_t json_len = 0;
 
     for (;;) {
@@ -60,11 +69,40 @@ static void s_pipeline_task_func(void *param)
             }
         }
 
+        /* 3b. Lua on_adv hook */
+        s_format_addr(parsed.addr, addr_str, sizeof(addr_str));
+        if (script_is_running() && lua_engine_has_func("on_adv") == 1) {
+            int hook_ret = lua_engine_call_on_adv("on_adv", addr_str,
+                parsed.rssi, parsed.has_name ? parsed.name : NULL);
+            if (hook_ret == 0) {
+                /* Script suppressed this advertisement */
+                s_stats.total_filtered++;
+                continue;
+            }
+            /* hook_ret < 0 means error or no function — fall through to default */
+        }
+
         /* 4. Encode as JSON */
         ret = json_encode_adv(&parsed, json_buf, sizeof(json_buf), &json_len);
         if (ret != 0) {
             s_stats.encode_errors++;
             continue;
+        }
+
+        /* 4b. Lua transform hook */
+        if (script_is_running() && lua_engine_has_func("transform") == 1) {
+            char transform_buf[JSON_LINE_MAX_LEN];
+            int hook_ret = lua_engine_call_transform("transform", addr_str,
+                json_buf, transform_buf, sizeof(transform_buf));
+            if (hook_ret == 0 && transform_buf[0] != '\0') {
+                /* Use transformed output */
+                ret = usb_console_send_json(transform_buf);
+                if (ret == 0) {
+                    s_stats.total_output++;
+                }
+                continue;
+            }
+            /* hook_ret < 0 means error — fall through to default JSON */
         }
 
         /* 5. Output via USB CDC */

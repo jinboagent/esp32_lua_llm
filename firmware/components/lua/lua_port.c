@@ -225,3 +225,103 @@ bool lua_engine_is_ready(void)
 {
     return s_initialized;
 }
+
+int lua_engine_has_func(const char *name)
+{
+    if (name == NULL) {
+        return -602;
+    }
+    if (!s_initialized || s_lua_state == NULL) {
+        return -606;
+    }
+
+    lua_getglobal(s_lua_state, name);
+    int exists = lua_isfunction(s_lua_state, -1) ? 1 : 0;
+    lua_pop(s_lua_state, 1);
+    return exists;
+}
+
+int lua_engine_call_on_adv(const char *func_name, const char *addr,
+                           int8_t rssi, const char *name)
+{
+    if (!s_initialized || s_lua_state == NULL) {
+        return -606;
+    }
+
+    /* Look up the function */
+    lua_getglobal(s_lua_state, func_name);
+    if (!lua_isfunction(s_lua_state, -1)) {
+        lua_pop(s_lua_state, 1);
+        return -1; /* function not defined */
+    }
+
+    /* Push arguments: addr, rssi, name */
+    lua_pushstring(s_lua_state, addr ? addr : "");
+    lua_pushinteger(s_lua_state, rssi);
+    if (name != NULL) {
+        lua_pushstring(s_lua_state, name);
+    } else {
+        lua_pushnil(s_lua_state);
+    }
+
+    /* Call with timeout hook */
+    s_hook_ctx.count = 0;
+    s_hook_ctx.limit = LUA_EXEC_TIMEOUT_INSTR;
+    lua_sethook(s_lua_state, s_timeout_hook, LUA_MASKCOUNT, 100);
+
+    int status = lua_pcall(s_lua_state, 3, 1, 0);
+
+    lua_sethook(s_lua_state, NULL, 0, 0);
+
+    if (status != LUA_OK) {
+        lua_pop(s_lua_state, 1);
+        lua_settop(s_lua_state, 0);
+        return -613;
+    }
+
+    /* Get return value (true = pass, false = suppress) */
+    int result = lua_toboolean(s_lua_state, -1) ? 1 : 0;
+    lua_pop(s_lua_state, 1);
+    lua_settop(s_lua_state, 0);
+    return result;
+}
+
+int lua_engine_call_transform(const char *func_name, const char *addr,
+                              const char *json_in, char *json_out, uint16_t out_len)
+{
+    if (!s_initialized || s_lua_state == NULL) {
+        return -606;
+    }
+
+    lua_getglobal(s_lua_state, func_name);
+    if (!lua_isfunction(s_lua_state, -1)) {
+        lua_pop(s_lua_state, 1);
+        return -1;
+    }
+
+    lua_pushstring(s_lua_state, addr ? addr : "");
+    lua_pushstring(s_lua_state, json_in ? json_in : "");
+
+    s_hook_ctx.count = 0;
+    s_hook_ctx.limit = LUA_EXEC_TIMEOUT_INSTR;
+    lua_sethook(s_lua_state, s_timeout_hook, LUA_MASKCOUNT, 100);
+
+    int status = lua_pcall(s_lua_state, 2, 1, 0);
+
+    lua_sethook(s_lua_state, NULL, 0, 0);
+
+    if (status != LUA_OK) {
+        lua_pop(s_lua_state, 1);
+        lua_settop(s_lua_state, 0);
+        return -613;
+    }
+
+    const char *ret = lua_tostring(s_lua_state, -1);
+    if (ret != NULL && json_out != NULL && out_len > 0) {
+        snprintf(json_out, out_len, "%s", ret);
+    }
+
+    lua_pop(s_lua_state, 1);
+    lua_settop(s_lua_state, 0);
+    return 0;
+}
