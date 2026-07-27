@@ -33,6 +33,7 @@ static void s_on_reset(int reason)
 
 static void s_host_task(void *param)
 {
+    (void)param;
     nimble_port_run();
     nimble_port_freertos_deinit();
 }
@@ -92,7 +93,12 @@ int ble_init(void)
 
     if (!(bits & BLE_SYNC_BIT)) {
         printf("BLE: host sync timeout\n");
+        /* Stop the host, then wait for host task to exit before deinit.
+         * nimble_port_stop() causes nimble_port_run() to return, after which
+         * the host task calls nimble_port_freertos_deinit() and deletes itself.
+         * We must not call nimble_port_deinit() concurrently. (B-S2-1 fix) */
         nimble_port_stop();
+        vTaskDelay(pdMS_TO_TICKS(200));
         nimble_port_deinit();
         vEventGroupDelete(s_sync_event_group);
         s_sync_event_group = NULL;

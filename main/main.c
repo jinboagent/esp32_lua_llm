@@ -59,15 +59,22 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
                     "\"msg\":\"already scanning\"}");
             } else {
                 int ret1 = ble_scan_start();
-                int ret2 = pipeline_start();
-                if (ret1 == 0 && ret2 == 0) {
-                    snprintf(response, response_len,
-                        "{\"status\":\"ok\",\"cmd\":\"scan_start\"}");
-                } else {
+                if (ret1 != 0) {
                     snprintf(response, response_len,
                         "{\"status\":\"error\",\"cmd\":\"scan_start\","
-                        "\"msg\":\"start failed: scan=%d pipeline=%d\"}",
-                        ret1, ret2);
+                        "\"msg\":\"scan failed: %d\"}", ret1);
+                } else {
+                    int ret2 = pipeline_start();
+                    if (ret2 != 0) {
+                        /* Rollback: scan started but pipeline failed (B-S3-7 fix) */
+                        ble_scan_stop();
+                        snprintf(response, response_len,
+                            "{\"status\":\"error\",\"cmd\":\"scan_start\","
+                            "\"msg\":\"pipeline failed: %d\"}", ret2);
+                    } else {
+                        snprintf(response, response_len,
+                            "{\"status\":\"ok\",\"cmd\":\"scan_start\"}");
+                    }
                 }
             }
         }
@@ -91,7 +98,9 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
     else if (strncmp(cmd, "FILTER ", 7) == 0) {
         const char *action = cmd + 7;
         if (strcmp(action, "CLEAR") == 0) {
+            lua_engine_lock();  /* B-S3-6 fix: protect filter from concurrent pipeline access */
             filter_clear(&s_filter_engine);
+            lua_engine_unlock();
             snprintf(response, response_len,
                 "{\"status\":\"ok\",\"cmd\":\"filter_clear\"}");
         }
@@ -131,8 +140,10 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
                     goto filter_done;
                 }
 
+                lua_engine_lock();  /* B-S3-6 fix */
                 int ret = filter_add_rule(&s_filter_engine, ftype,
                     ftype == FILTER_TYPE_RSSI ? NULL : value, rssi_val);
+                lua_engine_unlock();
                 if (ret == 0) {
                     snprintf(response, response_len,
                         "{\"status\":\"ok\",\"cmd\":\"filter_add\","

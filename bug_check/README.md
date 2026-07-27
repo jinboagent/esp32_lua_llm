@@ -30,17 +30,20 @@
 
 6 new issues found after Stage 0 implementation. See `archive/new_bugs_2026-07-19_00-00-58.md` for details.
 
-## Latest: Stage 0-1 Evaluation (2026-07-21)
+## Latest Evaluations
 
-See [`stage0-1-eval-2026-07-21.md`](stage0-1-eval-2026-07-21.md) — 15 bugs found (4 critical, 5 medium, 6 low) + test coverage analysis.
+### Stage 0-1 (2026-07-21)
+See [`stage0-1-eval-2026-07-21.md`](stage0-1-eval-2026-07-21.md) — **15 bugs** (4 critical, 5 medium, 6 low)
 
-### Critical New Bugs
-| ID | Description |
-|----|-------------|
-| B1 | Pipeline dead code — `vTaskDelete(NULL)` prevents re-init |
-| B2 | Filter engine never connected to pipeline (filtering non-functional) |
-| B3 | `ESP_ERROR_CHECK(nvs_flash_erase())` calls abort() on failure |
-| B4 | `getchar()` blocks — USB read timeout logic doesn't work |
+### Stage 2-3 (2026-07-21)
+See [`stage2-3-eval-2026-07-21.md`](stage2-3-eval-2026-07-21.md) — **35 bugs** (11 critical, 14 medium, 10 low)
+
+**Top 3 critical across all stages:**
+| ID | Stage | Description |
+|----|-------|-------------|
+| B-S3-2 | Stage 3 | **Sandbox bypass** — blocklist allows LLM scripts to recover dangerous libs (debug/io) |
+| B-S3-4 | Stage 3 | **No mutex on lua_State** — two FreeRTOS tasks race on Lua VM |
+| B-S2-4 | Stage 2 | **False dedup** — weak XOR hash silently drops legitimate device data |
 
 ### Key Open Issues (from previous evaluations)
 

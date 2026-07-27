@@ -90,10 +90,10 @@ int script_upload_end(void)
         s_upload.buffer[SCRIPT_MAX_SIZE - 1] = '\0';
     }
 
-    /* Trial compile to catch syntax errors */
+    /* Trial compile to catch syntax errors — does NOT execute (B-S3-3 fix) */
     char err_buf[128] = {0};
-    int ret = lua_engine_exec((const char *)s_upload.buffer, err_buf, sizeof(err_buf));
-    if (ret == -612) {
+    int ret = lua_engine_compile_check((const char *)s_upload.buffer, err_buf, sizeof(err_buf));
+    if (ret != 0) {
         printf("Script: compile error: %s\n", err_buf);
         return -612;
     }

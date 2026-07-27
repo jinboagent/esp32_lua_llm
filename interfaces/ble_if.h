@@ -22,7 +22,7 @@ extern "C" {
 
 #define BLE_ADV_DATA_MAX_LEN    31
 #define BLE_SCAN_QUEUE_DEPTH    32
-#define BLE_DEDUP_TABLE_SIZE    64
+#define BLE_DEDUP_TABLE_SIZE    128
 #define BLE_DEDUP_WINDOW_MS     1000
 
 /* Raw advertisement report from BLE scan */

@@ -61,9 +61,12 @@ static void s_pipeline_task_func(void *param)
         parsed.addr_type = raw.addr_type;
         parsed.rssi = raw.rssi;
 
-        /* 3. Filter */
+        /* 3. Filter (locked to prevent concurrent CLI modification, B-S3-6 fix) */
         if (s_filter_engine != NULL) {
-            if (!filter_evaluate(s_filter_engine, &parsed)) {
+            lua_engine_lock();
+            bool pass = filter_evaluate(s_filter_engine, &parsed);
+            lua_engine_unlock();
+            if (!pass) {
                 s_stats.total_filtered++;
                 continue;
             }

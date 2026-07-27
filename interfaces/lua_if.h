@@ -113,6 +113,27 @@ int lua_engine_call_on_adv(const char *func_name, const char *addr,
 int lua_engine_call_transform(const char *func_name, const char *addr,
                               const char *json_in, char *json_out, uint16_t out_len);
 
+/*
+ * Trial-compile a Lua script without executing it.
+ * Used to verify syntax before saving to storage.
+ *
+ * @param script   Lua source code (null-terminated).
+ * @param err      Output buffer for error message (may be NULL).
+ * @param err_len  Size of error buffer.
+ * @return 0 on success, -612 on compile error (error message in err).
+ */
+int lua_engine_compile_check(const char *script, char *err, uint16_t err_len);
+
+/*
+ * Acquire the Lua engine mutex. Must be called before accessing
+ * the Lua VM from a task other than the one that called lua_engine_exec.
+ * Use lua_engine_unlock() when done.
+ */
+void lua_engine_lock(void);
+
+/* Release the Lua engine mutex. */
+void lua_engine_unlock(void);
+
 #ifdef __cplusplus
 }
 #endif
