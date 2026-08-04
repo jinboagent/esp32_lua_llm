@@ -1,4 +1,5 @@
 build/
+build_output.txt
 managed_components/
 .claude/
 trace/
