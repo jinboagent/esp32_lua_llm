@@ -44,7 +44,6 @@ typedef struct {
     filter_type_t type;
     char     pattern[FILTER_PATTERN_MAX_LEN];
     int8_t   rssi_threshold;
-    bool     active;
 } filter_rule_t;
 
 typedef struct {

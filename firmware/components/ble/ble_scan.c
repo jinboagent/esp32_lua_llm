@@ -16,6 +16,13 @@ typedef struct {
 
 static QueueHandle_t s_scan_queue = NULL;
 static atomic_bool s_scanning = false;  /* B-S2-2 fix: atomic access */
+static atomic_uint s_queue_drop_count = 0;  /* M-S2-4 fix: observability */
+
+/* Protects s_dedup against concurrent access from the NimBLE host task
+ * (GAP event handler) and the CLI task (memset in ble_scan_start) — B-S2-3
+ * fix. Task-level critical section; the table is only touched for a few
+ * microseconds per advertisement. */
+static portMUX_TYPE s_dedup_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /* Scan parameters (NimBLE uses 0.625ms units) */
 static uint32_t s_interval_ms = 100;
@@ -39,6 +46,10 @@ static bool s_dedup_check(const uint8_t addr[6])
 {
     int64_t now_us = esp_timer_get_time();
     uint8_t idx = s_dedup_hash(addr);
+    bool duplicate = false;
+    bool recorded = false;
+
+    portENTER_CRITICAL(&s_dedup_mux);
 
     /* Linear probing — check up to 4 slots (B-S2-4 fix) */
     for (int probe = 0; probe < 4; probe++) {
@@ -48,34 +59,41 @@ static bool s_dedup_check(const uint8_t addr[6])
             /* Found matching entry — check timestamp */
             int64_t elapsed = now_us - s_dedup[slot].last_seen_us;
             if (elapsed < (int64_t)BLE_DEDUP_WINDOW_MS * 1000) {
-                return true; /* duplicate */
+                duplicate = true; /* duplicate */
+            } else {
+                /* Entry expired — reuse it */
+                s_dedup[slot].last_seen_us = now_us;
             }
-            /* Entry expired — reuse it */
-            s_dedup[slot].last_seen_us = now_us;
-            return false;
+            recorded = true;
+            break;
         }
 
         /* Empty slot (never used or expired) — claim it */
         if (s_dedup[slot].last_seen_us == 0) {
             memcpy(s_dedup[slot].addr, addr, 6);
             s_dedup[slot].last_seen_us = now_us;
-            return false;
+            recorded = true;
+            break;
         }
     }
 
-    /* All probed slots occupied by other devices — evict oldest */
-    uint8_t oldest_slot = idx;
-    int64_t oldest_time = s_dedup[idx].last_seen_us;
-    for (int probe = 1; probe < 4; probe++) {
-        uint8_t slot = (idx + probe) % BLE_DEDUP_TABLE_SIZE;
-        if (s_dedup[slot].last_seen_us < oldest_time) {
-            oldest_time = s_dedup[slot].last_seen_us;
-            oldest_slot = slot;
+    if (!recorded) {
+        /* All probed slots occupied by other devices — evict oldest */
+        uint8_t oldest_slot = idx;
+        int64_t oldest_time = s_dedup[idx].last_seen_us;
+        for (int probe = 1; probe < 4; probe++) {
+            uint8_t slot = (idx + probe) % BLE_DEDUP_TABLE_SIZE;
+            if (s_dedup[slot].last_seen_us < oldest_time) {
+                oldest_time = s_dedup[slot].last_seen_us;
+                oldest_slot = slot;
+            }
         }
+        memcpy(s_dedup[oldest_slot].addr, addr, 6);
+        s_dedup[oldest_slot].last_seen_us = now_us;
     }
-    memcpy(s_dedup[oldest_slot].addr, addr, 6);
-    s_dedup[oldest_slot].last_seen_us = now_us;
-    return false;
+
+    portEXIT_CRITICAL(&s_dedup_mux);
+    return duplicate;
 }
 
 static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
@@ -102,8 +120,10 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
         report.adv_data_len = data_len;
         memcpy(report.adv_data, disc->data, data_len);
 
-        /* Non-blocking enqueue — drop if queue full */
-        xQueueSend(s_scan_queue, &report, 0);
+        /* Non-blocking enqueue — drop if queue full (counted, M-S2-4 fix) */
+        if (xQueueSend(s_scan_queue, &report, 0) != pdTRUE) {
+            atomic_fetch_add(&s_queue_drop_count, 1);
+        }
         break;
     }
 
@@ -136,14 +156,29 @@ int ble_scan_start(void)
     } else {
         xQueueReset(s_scan_queue);
     }
+    atomic_store(&s_queue_drop_count, 0);
 
-    /* Clear dedup table */
+    /* Clear dedup table under the same lock that protects it from the GAP
+     * event handler — a handler callback from the previous scan may still
+     * be in flight in the NimBLE host task (B-S2-3 fix) */
+    portENTER_CRITICAL(&s_dedup_mux);
     memset(s_dedup, 0, sizeof(s_dedup));
+    portEXIT_CRITICAL(&s_dedup_mux);
 
-    /* Configure scan parameters */
+    /* Configure scan parameters.
+     * Clamp converted values to the BLE spec range for scan interval/window
+     * (0x0004..0x4000 in 0.625 ms units) as defense in depth (L-S2-2 fix). */
+    uint16_t itvl = (uint16_t)((s_interval_ms * 1000) / 625);
+    uint16_t window = (uint16_t)((s_window_ms * 1000) / 625);
+    if (itvl < 0x0004) itvl = 0x0004;
+    if (itvl > 0x4000) itvl = 0x4000;
+    if (window < 0x0004) window = 0x0004;
+    if (window > 0x4000) window = 0x4000;
+    if (window > itvl) window = itvl;
+
     struct ble_gap_disc_params params = {
-        .itvl = (s_interval_ms * 1000) / 625,
-        .window = (s_window_ms * 1000) / 625,
+        .itvl = itvl,
+        .window = window,
         .passive = 1,
         .filter_duplicates = 0,
     };
@@ -173,6 +208,13 @@ int ble_scan_stop(void)
     }
 
     atomic_store(&s_scanning, false);
+
+    /* Drain stale reports so a consumer that reads after stop never sees
+     * data from the stopped scan (L4 fix) */
+    if (s_scan_queue != NULL) {
+        xQueueReset(s_scan_queue);
+    }
+
     printf("BLE: scan stopped\n");
     return 0;
 }
@@ -182,8 +224,16 @@ bool ble_scan_is_active(void)
     return atomic_load(&s_scanning);
 }
 
+uint32_t ble_scan_get_drop_count(void)
+{
+    return atomic_load(&s_queue_drop_count);
+}
+
 int ble_scan_set_params(uint32_t interval_ms, uint32_t window_ms)
 {
+    if (atomic_load(&s_scanning)) {
+        return -411; /* parameters apply at next scan start (L-S2-3 fix) */
+    }
     if (interval_ms < 10 || interval_ms > 10240) {
         return -401;
     }

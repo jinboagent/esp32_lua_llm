@@ -78,7 +78,10 @@ int ble_init(void)
     ble_hs_cfg.reset_cb = s_on_reset;
 
     /* Set device name */
-    ble_svc_gap_device_name_set("BLE-Sniffer");
+    int rc = ble_svc_gap_device_name_set("BLE-Sniffer");
+    if (rc != 0) {
+        printf("BLE: failed to set device name: %d\n", rc);
+    }
 
     /* Initialize storage config (required by NimBLE host) */
     ble_store_config_init();
@@ -102,6 +105,7 @@ int ble_init(void)
         nimble_port_deinit();
         vEventGroupDelete(s_sync_event_group);
         s_sync_event_group = NULL;
+        nvs_flash_deinit();
         return -5;
     }
 
@@ -116,13 +120,24 @@ int ble_deinit(void)
         return -6;
     }
 
+    /* Stop any active scan before tearing down the stack (M-S2-2 fix) */
+    if (ble_scan_is_active()) {
+        ble_scan_stop();
+    }
+
+    /* Stop the host, then wait for the host task to exit before deinit —
+     * same sequence as the sync-timeout path (B-S2-1, L-S2-1 fix) */
     nimble_port_stop();
+    vTaskDelay(pdMS_TO_TICKS(200));
     nimble_port_deinit();
 
     if (s_sync_event_group) {
         vEventGroupDelete(s_sync_event_group);
         s_sync_event_group = NULL;
     }
+
+    /* Release NVS opened in ble_init (M-S2-2 fix) */
+    nvs_flash_deinit();
 
     s_initialized = false;
     return 0;

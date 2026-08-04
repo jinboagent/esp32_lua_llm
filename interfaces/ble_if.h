@@ -55,6 +55,12 @@ bool ble_scan_is_active(void);
 int  ble_scan_set_params(uint32_t interval_ms, uint32_t window_ms);
 int  ble_scan_get_report(adv_report_raw_t *out, uint32_t timeout_ms);
 
+/*
+ * Get the number of advertisement reports dropped because the scan queue
+ * was full. Reset by ble_scan_start().
+ */
+uint32_t ble_scan_get_drop_count(void);
+
 /* --- Scan Pipeline (F2.3) --- */
 int  pipeline_init(void);
 int  pipeline_start(void);

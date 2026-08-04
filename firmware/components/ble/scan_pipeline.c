@@ -7,6 +7,7 @@
 #include "script_if.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -15,7 +16,7 @@
 #define PIPELINE_QUEUE_TIMEOUT_MS  100
 
 static TaskHandle_t s_pipeline_task = NULL;
-static bool s_running = false;
+static atomic_bool s_running = false;  /* written by CLI task, read by pipeline task */
 static pipeline_stats_t s_stats;
 
 /* Optional filter engine (set externally, not owned by pipeline) */
@@ -36,7 +37,7 @@ static void s_pipeline_task_func(void *param)
     uint16_t json_len = 0;
 
     for (;;) {
-        if (!s_running) {
+        if (!atomic_load(&s_running)) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
@@ -72,11 +73,10 @@ static void s_pipeline_task_func(void *param)
             }
         }
 
-        /* 3b. Lua on_adv hook */
-        s_format_addr(parsed.addr, addr_str, sizeof(addr_str));
+        /* 3b. Lua on_adv hook — spec signature:
+         * on_adv(addr, addr_type, rssi, name, uuids, manu_id, manu_data) (M-S3-9 fix) */
         if (script_is_running() && lua_engine_has_func("on_adv") == 1) {
-            int hook_ret = lua_engine_call_on_adv("on_adv", addr_str,
-                parsed.rssi, parsed.has_name ? parsed.name : NULL);
+            int hook_ret = lua_engine_call_on_adv("on_adv", &parsed);
             if (hook_ret == 0) {
                 /* Script suppressed this advertisement */
                 s_stats.total_filtered++;
@@ -94,6 +94,7 @@ static void s_pipeline_task_func(void *param)
 
         /* 4b. Lua transform hook */
         if (script_is_running() && lua_engine_has_func("transform") == 1) {
+            s_format_addr(parsed.addr, addr_str, sizeof(addr_str));
             char transform_buf[JSON_LINE_MAX_LEN];
             int hook_ret = lua_engine_call_transform("transform", addr_str,
                 json_buf, transform_buf, sizeof(transform_buf));
@@ -126,7 +127,7 @@ int pipeline_init(void)
     }
 
     memset(&s_stats, 0, sizeof(s_stats));
-    s_running = false;
+    atomic_store(&s_running, false);
     s_filter_engine = NULL;
 
     /* Create task — runs forever, idles when s_running == false */
@@ -153,11 +154,11 @@ int pipeline_start(void)
     if (s_pipeline_task == NULL) {
         return -806;
     }
-    if (s_running) {
+    if (atomic_load(&s_running)) {
         return -811;
     }
 
-    s_running = true;
+    atomic_store(&s_running, true);
     printf("Pipeline: started\n");
     return 0;
 }
@@ -167,11 +168,11 @@ int pipeline_stop(void)
     if (s_pipeline_task == NULL) {
         return -806;
     }
-    if (!s_running) {
+    if (!atomic_load(&s_running)) {
         return -811;
     }
 
-    s_running = false;
+    atomic_store(&s_running, false);
 
     printf("Pipeline: stopped (received=%lu, filtered=%lu, output=%lu, "
            "parse_err=%lu, encode_err=%lu)\n",
@@ -180,6 +181,12 @@ int pipeline_stop(void)
            (unsigned long)s_stats.total_output,
            (unsigned long)s_stats.parse_errors,
            (unsigned long)s_stats.encode_errors);
+
+    /* Stack headroom observability (L-S2-4 fix): report how much of the
+     * 4 KB task stack was left unused at the deepest call point. */
+    printf("Pipeline: stack high-water mark: %u bytes free\n",
+           (unsigned)uxTaskGetStackHighWaterMark2(s_pipeline_task));
+
     return 0;
 }
 

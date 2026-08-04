@@ -49,6 +49,7 @@ int storage_write_file(const char *path, const uint8_t *data, uint32_t len)
     if (ret != 0) return ret;
     if (data == NULL) return -702;
     if (len > STORAGE_MAX_SCRIPT_SIZE) return -704;
+    if (!s_mounted) return -701;
 
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return -700;
@@ -77,6 +78,7 @@ int storage_read_file(const char *path, uint8_t *buf, uint32_t buf_len, uint32_t
     int ret = s_check_path(path);
     if (ret != 0) return ret;
     if (buf == NULL || out_len == NULL) return -702;
+    if (!s_mounted) return -701;
 
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return -700;
@@ -120,6 +122,7 @@ int storage_delete_file(const char *path)
 {
     int ret = s_check_path(path);
     if (ret != 0) return ret;
+    if (!s_mounted) return -701;
 
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return -700;
@@ -138,8 +141,17 @@ int storage_file_exists(const char *path)
 {
     int ret = s_check_path(path);
     if (ret != 0) return ret;
+    if (!s_mounted) return -701;
+
+    /* Take the mutex so existence checks don't race with concurrent
+     * write/delete operations (M3 fix) */
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return -700;
+    }
 
     FILE *f = fopen(path, "r");
+    xSemaphoreGive(s_mutex);
+
     if (f == NULL) return 0;
     fclose(f);
     return 1;
@@ -148,6 +160,7 @@ int storage_file_exists(const char *path)
 int storage_get_free_space(uint32_t *free_bytes)
 {
     if (free_bytes == NULL) return -702;
+    if (!s_mounted) return -701;
 
     size_t total = 0, used = 0;
     esp_err_t err = esp_littlefs_info("littlefs", &total, &used);

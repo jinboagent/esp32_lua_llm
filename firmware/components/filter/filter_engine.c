@@ -39,7 +39,6 @@ int filter_add_rule(filter_engine_t *eng, filter_type_t type,
 
     filter_rule_t *rule = &eng->rules[eng->rule_count];
     rule->type = type;
-    rule->active = true;
     rule->rssi_threshold = rssi_val;
 
     if (pattern != NULL) {
@@ -162,7 +161,7 @@ static bool s_evaluate_type(const filter_engine_t *eng, filter_type_t type,
 {
     bool has_type_filter = false;
     for (uint8_t i = 0; i < eng->rule_count; i++) {
-        if (eng->rules[i].type != type || !eng->rules[i].active) {
+        if (eng->rules[i].type != type) {
             continue;
         }
         has_type_filter = true;

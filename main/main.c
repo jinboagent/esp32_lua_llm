@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,6 +17,14 @@
 static filter_engine_t s_filter_engine;
 
 /* Command parser */
+static int s_hex_nibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
 static void process_command(const char *cmd, char *response, uint16_t response_len)
 {
     if (strcmp(cmd, "STATUS") == 0) {
@@ -24,6 +33,7 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
         snprintf(response, response_len,
             "{\"status\":\"ok\",\"cmd\":\"status\","
             "\"scanning\":%s,"
+            "\"queue_drops\":%lu,"
             "\"filter_count\":%d,"
             "\"lua_ready\":%s,"
             "\"script_loaded\":%s,"
@@ -31,6 +41,7 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
             "\"pipeline\":{\"received\":%lu,\"filtered\":%lu,"
             "\"output\":%lu,\"parse_err\":%lu,\"encode_err\":%lu}}",
             ble_scan_is_active() ? "true" : "false",
+            (unsigned long)ble_scan_get_drop_count(),
             filter_get_count(&s_filter_engine),
             lua_engine_is_ready() ? "true" : "false",
             script_is_loaded() ? "true" : "false",
@@ -132,7 +143,17 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
                     ftype = FILTER_TYPE_MAC;
                 } else if (strcmp(type_str, "RSSI") == 0) {
                     ftype = FILTER_TYPE_RSSI;
-                    rssi_val = (int8_t)atoi(value);
+                    /* Validate range before narrowing to int8_t (M-S3-7 fix —
+                     * atoi("999") wrapped silently) */
+                    char *end = NULL;
+                    long v = strtol(value, &end, 10);
+                    if (end == value || *end != '\0' || v < -128 || v > 127) {
+                        snprintf(response, response_len,
+                            "{\"status\":\"error\",\"cmd\":\"filter_add\","
+                            "\"msg\":\"RSSI must be a number in -128..127\"}");
+                        goto filter_done;
+                    }
+                    rssi_val = (int8_t)v;
                 } else {
                     snprintf(response, response_len,
                         "{\"status\":\"error\",\"cmd\":\"filter_add\","
@@ -227,23 +248,44 @@ static void process_command(const char *cmd, char *response, uint16_t response_l
             }
         }
         else if (strncmp(action, "CHUNK ", 6) == 0) {
-            /* SCRIPT CHUNK <hex_data> */
+            /* SCRIPT CHUNK <hex_data> — validated decode (M-S3-8 fix:
+             * previously non-hex chars decoded as 0, odd lengths dropped
+             * the last nibble, and >512-byte payloads truncated silently) */
             const char *hex = action + 6;
+            size_t hex_len = strlen(hex);
             uint8_t chunk_buf[512];
             uint16_t chunk_len = 0;
-            for (const char *p = hex; *p && *(p+1) && chunk_len < sizeof(chunk_buf); p += 2) {
-                char byte_str[3] = {p[0], p[1], '\0'};
-                chunk_buf[chunk_len++] = (uint8_t)strtol(byte_str, NULL, 16);
+            bool hex_ok = (hex_len > 0) && (hex_len % 2 == 0) &&
+                          (hex_len / 2 <= sizeof(chunk_buf));
+
+            if (hex_ok) {
+                for (size_t i = 0; i < hex_len; i += 2) {
+                    int hi = s_hex_nibble(hex[i]);
+                    int lo = s_hex_nibble(hex[i + 1]);
+                    if (hi < 0 || lo < 0) {
+                        hex_ok = false;
+                        break;
+                    }
+                    chunk_buf[chunk_len++] = (uint8_t)((hi << 4) | lo);
+                }
             }
-            int ret = script_upload_chunk(chunk_buf, chunk_len);
-            if (ret == 0) {
-                snprintf(response, response_len,
-                    "{\"status\":\"ok\",\"cmd\":\"script_chunk\","
-                    "\"bytes\":%d}", chunk_len);
-            } else {
+
+            if (!hex_ok) {
                 snprintf(response, response_len,
                     "{\"status\":\"error\",\"cmd\":\"script_chunk\","
-                    "\"code\":%d}", ret);
+                    "\"msg\":\"invalid hex: even length, 0-9a-f, max %u bytes\"}",
+                    (unsigned)sizeof(chunk_buf));
+            } else {
+                int ret = script_upload_chunk(chunk_buf, chunk_len);
+                if (ret == 0) {
+                    snprintf(response, response_len,
+                        "{\"status\":\"ok\",\"cmd\":\"script_chunk\","
+                        "\"bytes\":%d}", chunk_len);
+                } else {
+                    snprintf(response, response_len,
+                        "{\"status\":\"error\",\"cmd\":\"script_chunk\","
+                        "\"code\":%d}", ret);
+                }
             }
         }
         else if (strcmp(action, "END") == 0) {

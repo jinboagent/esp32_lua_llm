@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "proto_if.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,7 +30,9 @@ extern "C" {
 /* Maximum result buffer size from lua_engine_exec */
 #define LUA_RESULT_MAX_LEN     256
 
-/* Execution timeout in hook calls (hook fires every 100 instructions, so 100 calls = ~10ms on ESP32-S3 @ 160MHz) */
+/* Execution timeout: the debug hook fires every 1000 instructions, so
+ * 100 hook calls ≈ 100k instructions ≈ 10 ms on ESP32-S3 @ 160 MHz
+ * (M-S3-6 fix: hook interval was 100, spec requires 1000) */
 #define LUA_EXEC_TIMEOUT_INSTR 100
 
 /*
@@ -86,18 +89,19 @@ bool lua_engine_is_ready(void);
 int lua_engine_has_func(const char *name);
 
 /*
- * Call a Lua global function: func(addr, rssi, name) → bool
- * Used for the on_adv hook.
+ * Call a Lua global function with the spec hook signature:
+ *   on_adv(addr, addr_type, rssi, name, uuids, manu_id, manu_data) → bool
+ * Used for the on_adv hook. All arguments are taken from the parsed report.
  *
  * @param func_name  Lua function name (e.g., "on_adv").
- * @param addr       BLE address as "AA:BB:CC:DD:EE:FF".
- * @param rssi       RSSI in dBm.
- * @param name       Device name (may be NULL).
+ * @param report     Parsed advertisement report (addr, addr_type, rssi,
+ *                   name, uuid16 list, manufacturer id/data). Must not be NULL.
  * @return 1 = pass (true), 0 = suppress (false), -1 = function not defined,
- *         negative error code on failure.
+ *         negative error code on failure:
+ *         -602 NULL pointer, -606 engine not ready,
+ *         -610 out of memory, -613 runtime error, -614 timeout.
  */
-int lua_engine_call_on_adv(const char *func_name, const char *addr,
-                           int8_t rssi, const char *name);
+int lua_engine_call_on_adv(const char *func_name, const proto_adv_report_t *report);
 
 /*
  * Call a Lua global function: func(addr, json) → string
@@ -123,6 +127,16 @@ int lua_engine_call_transform(const char *func_name, const char *addr,
  * @return 0 on success, -612 on compile error (error message in err).
  */
 int lua_engine_compile_check(const char *script, char *err, uint16_t err_len);
+
+/*
+ * Remove a global function from the Lua state (sets it to nil).
+ * Used by script_stop() to release hook functions so a stopped script
+ * cannot linger in the global table.
+ *
+ * @param name  Global name to clear (e.g., "on_adv", "transform").
+ * @return 0 on success, -602 if NULL, -606 if engine not ready.
+ */
+int lua_engine_clear_func(const char *name);
 
 /*
  * Acquire the Lua engine mutex. Must be called before accessing

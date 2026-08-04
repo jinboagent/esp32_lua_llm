@@ -66,25 +66,19 @@ int usb_console_read_line(char *buf, uint16_t buf_len, uint32_t timeout_ms)
     uint16_t pos = 0;
 
     while (1) {
-        /* Check timeout */
-        if (timeout_ms > 0) {
-            uint32_t elapsed = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS) - start_ms;
-            if (elapsed >= timeout_ms) {
-                if (pos > 0) {
-                    buf[pos] = '\0';
-                    return (int)pos;
-                }
-                return -503; /* Timeout */
-            }
-        }
-
         /* Try to read one byte from stdin (non-blocking via VFS) */
         int c = getchar();
         if (c == EOF) {
-            vTaskDelay(pdMS_TO_TICKS(10));
-            if (timeout_ms == 0 && pos == 0) {
+            uint32_t elapsed = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS) - start_ms;
+            if (elapsed >= timeout_ms) {
+                /* Timeout without a terminating '\n': the contract requires a
+                 * complete line or -503 (M1 fix). Discard the partial data —
+                 * executing a truncated command would be worse than dropping it.
+                 * Also fixes an infinite busy-loop for timeout_ms==0 with
+                 * partial data. */
                 return -503;
             }
+            vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
