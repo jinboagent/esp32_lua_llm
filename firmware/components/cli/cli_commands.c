@@ -211,9 +211,16 @@ static int h_scan(const char *action, char *response, uint16_t response_len)
                 "\"msg\":\"not scanning\"}");
             return 0;
         }
-        pipeline_stop();
-        ble_scan_stop();
+        /* L-S4-2 fix: stop results were silently ignored */
+        int r1 = pipeline_stop();
+        int r2 = ble_scan_stop();
         power_hold_activity(false);
+        if (r1 != 0 || r2 != 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan_stop\","
+                "\"msg\":\"stop failed: %d/%d\"}", r1, r2);
+            return 0;
+        }
         CLI_EMIT(response, response_len,
             "{\"status\":\"ok\",\"cmd\":\"scan_stop\"}");
         return 0;

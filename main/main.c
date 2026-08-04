@@ -83,10 +83,12 @@ void app_main(void)
             printf("> %s\n", cmd_buf);
             cli_process_command(cmd_buf, response, sizeof(response));
             /* Script data lines during a F4.2 text-line upload are
-             * acknowledged silently — only real responses go out. */
+             * acknowledged silently — only real responses go out.
+             * L-S4-3 fix: send_json already emits the response; the old
+             * extra printf("< ...") duplicated every response on the
+             * console stream. */
             if (response[0] != '\0') {
                 usb_console_send_json(response);
-                printf("< %s\n", response);
             }
         }
         else if (line_len == -503) {
