@@ -8,13 +8,14 @@
 #include "ble_if.h"
 #include "lua_if.h"
 #include "cli_if.h"
+#include "power_if.h"
 
 void app_main(void)
 {
-    printf("\n=== BLE Sniffer Dongle v0.4.0 ===\n");
+    printf("\n=== BLE Sniffer Dongle v1.0.0 ===\n");
     printf("Commands: STATUS, VERSION, SCAN START/STOP/INTERVAL, "
            "FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/DEINIT, "
-           "SCRIPT BEGIN/CHUNK/END/RUN/STOP/STATUS\n\n");
+           "SCRIPT LOAD/BEGIN/CHUNK/END/RUN/STOP/STATUS, POWER\n\n");
 
     /* Initialize USB console */
     int ret = usb_console_init();
@@ -56,6 +57,12 @@ void app_main(void)
     ret = lua_engine_init();
     if (ret != 0) {
         printf("WARNING: Lua engine init failed (%d)\n", ret);
+    }
+
+    /* Initialize power management (automatic light sleep when idle) */
+    ret = power_init();
+    if (ret != 0) {
+        printf("WARNING: Power init failed (%d)\n", ret);
     }
 
     printf("Ready. Type SCAN START to begin.\n\n");

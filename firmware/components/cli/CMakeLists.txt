@@ -8,5 +8,5 @@ endif()
 idf_component_register(
     SRCS "cli_commands.c"
     INCLUDE_DIRS "." "${CMAKE_SOURCE_DIR}/interfaces"
-    REQUIRES proto json_enc filter storage ble bridge ${_lua_dep}
+    REQUIRES proto json_enc filter storage ble bridge power ${_lua_dep}
 )

@@ -25,5 +25,8 @@ extern uint32_t stub_upload_chunk_calls;
 extern uint32_t stub_uploaded_bytes;
 extern bool     stub_upload_active;
 
+/* power stub controls */
+extern bool     stub_power_sleep_enabled;
+
 /* Reset every control to its default. */
 void stub_reset_all(void);

@@ -6,7 +6,7 @@ else()
 endif()
 
 idf_component_register(
-    SRCS "main.c"
+    SRCS "power_mgmt.c"
     INCLUDE_DIRS "." "${CMAKE_SOURCE_DIR}/interfaces"
-    REQUIRES usb storage ble cli power ${_lua_dep}
+    REQUIRES esp_pm ble ${_lua_dep}
 )

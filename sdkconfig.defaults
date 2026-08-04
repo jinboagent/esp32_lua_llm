@@ -28,6 +28,10 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 # CPU frequency
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
 
+# Power management (F4.3): automatic light sleep when all tasks idle
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+
 # Bluetooth (NimBLE) - observer role for BLE scanning
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y

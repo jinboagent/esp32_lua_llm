@@ -54,7 +54,7 @@ s.reset_input_buffer()
 # --- F4.1: VERSION / STATUS / state machine ---
 print("=== F4.1 CLI ===")
 r = send_cmd(s, "VERSION")
-check("VERSION 0.4.0", r and r.get("firmware") == "0.4.0", str(r))
+check("VERSION 1.0.0", r and r.get("firmware") == "1.0.0", str(r))
 
 r = send_cmd(s, "STATUS")
 check("STATUS has state field", r and r.get("state") == "idle", str(r))

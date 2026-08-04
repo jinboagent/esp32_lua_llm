@@ -168,3 +168,28 @@ cmake -B build -S . && cmake --build build
 # On-target test via ESP-IDF
 idf.py -C tests/harness build flash monitor
 ```
+
+## Implementation Notes (v1.0.0, 2026-08-04)
+
+Shipped scope differs from the original spec in three documented ways:
+
+1. **Automatic light sleep instead of manual sleep entry.** With
+   `CONFIG_PM_ENABLE=y` + `CONFIG_FREERTOS_USE_TICKLESS_IDLE=y`, the SoC
+   light-sleeps whenever all tasks block and wakes on USB console
+   activity. No sleep-entry code, no timer wake bookkeeping.
+2. **No-light-sleep activity lock while streaming.** During light sleep
+   the USB-Serial/JTAG console TX FIFO cannot drain and the console
+   drops output, so the CLI holds an `ESP_PM_NO_LIGHT_SLEEP` lock
+   (`power_hold_activity`) between SCAN START and SCAN STOP. Light
+   sleep therefore applies only when truly idle — which is the state
+   this feature targets ("between scan intervals" collapses to "idle"
+   under continuous scanning).
+3. **Deferred to v2:** USB bus-suspend detection (USB-Serial/JTAG
+   exposes no suspend signal on this hardware) and PMIC-based current
+   measurement (`power_get_current_ma` returns calibrated estimates:
+   45 mA scanning / 30 mA active idle / 8 mA light-sleep idle).
+
+Hardware-verified: wake-on-command after idle, advertisement streaming
+intact with PM enabled, `POWER SLEEP ON/OFF` + `POWER STATUS` CLI
+(extension commands, see F4.1 notes).
+

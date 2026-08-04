@@ -21,8 +21,9 @@
 #include "script_if.h"
 #include "storage_if.h"
 #include "bridge_if.h"
+#include "power_if.h"
 
-#define CLI_FW_VERSION "0.4.0"
+#define CLI_FW_VERSION "1.0.0"
 
 #define SCAN_INTERVAL_MIN_MS  10
 #define SCAN_INTERVAL_MAX_MS  10000
@@ -192,6 +193,9 @@ static int h_scan(const char *action, char *response, uint16_t response_len)
                 "\"msg\":\"pipeline failed: %d\"}", ret2);
             return 0;
         }
+        /* F4.3: block light sleep while streaming — console output is
+         * dropped if the SoC sleeps between adv events. */
+        power_hold_activity(true);
         CLI_EMIT(response, response_len,
             "{\"status\":\"ok\",\"cmd\":\"scan_start\"}");
         return 0;
@@ -209,6 +213,7 @@ static int h_scan(const char *action, char *response, uint16_t response_len)
         }
         pipeline_stop();
         ble_scan_stop();
+        power_hold_activity(false);
         CLI_EMIT(response, response_len,
             "{\"status\":\"ok\",\"cmd\":\"scan_stop\"}");
         return 0;
@@ -553,6 +558,46 @@ static int h_script(const char *action, char *response, uint16_t response_len)
                           "SCRIPT LOAD|BEGIN|CHUNK|END|RUN|STOP|STATUS");
 }
 
+/* ---- POWER (extension commands for F4.3 observability/control) --------- */
+
+static int h_power(const char *action, char *response, uint16_t response_len)
+{
+    if (strcmp(action, "SLEEP ON") == 0) {
+        power_enable_sleep(true);
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"power_sleep\",\"enabled\":true}");
+        return 0;
+    }
+
+    if (strcmp(action, "SLEEP OFF") == 0) {
+        power_enable_sleep(false);
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"power_sleep\",\"enabled\":false}");
+        return 0;
+    }
+
+    if (strcmp(action, "STATUS") == 0) {
+        power_config_t cfg;
+        power_get_config(&cfg);
+        uint32_t ma = 0;
+        power_get_current_ma(&ma);
+        const char *state =
+            (power_get_state() == POWER_STATE_LIGHT_SLEEP)
+            ? "light_sleep" : "active";
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"power_status\","
+            "\"sleep_enabled\":%s,"
+            "\"state\":\"%s\","
+            "\"est_current_ma\":%lu}",
+            cfg.sleep_enabled ? "true" : "false",
+            state, (unsigned long)ma);
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+                          "POWER SLEEP ON|OFF|STATUS");
+}
+
 /* ---- Dispatch ---------------------------------------------------------- */
 
 /* True when the line is recognized as a CLI command (as opposed to a
@@ -560,7 +605,7 @@ static int h_script(const char *action, char *response, uint16_t response_len)
 static bool s_is_cli_command(const char *cmd)
 {
     static const char * const cmds[] = {
-        "STATUS", "VERSION", "SCAN", "FILTER", "LUA", "SCRIPT", NULL
+        "STATUS", "VERSION", "SCAN", "FILTER", "LUA", "SCRIPT", "POWER", NULL
     };
     for (int i = 0; cmds[i] != NULL; i++) {
         size_t n = strlen(cmds[i]);
@@ -620,6 +665,12 @@ int cli_process_command(const char *cmd, char *response, uint16_t response_len)
                               "SCRIPT LOAD|BEGIN|CHUNK|END|RUN|STOP|STATUS");
     if (strncmp(cmd, "SCRIPT ", 7) == 0)
         return h_script(cmd + 7, response, response_len);
+
+    if (strcmp(cmd, "POWER") == 0)
+        return s_syntax_error(response, response_len,
+                              "POWER SLEEP ON|OFF|STATUS");
+    if (strncmp(cmd, "POWER ", 6) == 0)
+        return h_power(cmd + 6, response, response_len);
 
     CLI_EMIT(response, response_len,
         "{\"status\":\"error\",\"msg\":\"unknown command\"}");

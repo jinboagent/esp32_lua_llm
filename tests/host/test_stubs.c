@@ -8,6 +8,7 @@
 #include "lua_if.h"
 #include "script_if.h"
 #include "storage_if.h"
+#include "power_if.h"
 
 bool     stub_ble_ready;
 bool     stub_scanning;
@@ -23,6 +24,8 @@ uint32_t stub_upload_chunk_calls;
 uint32_t stub_uploaded_bytes;
 bool     stub_upload_active;
 
+bool     stub_power_sleep_enabled;
+
 void stub_reset_all(void)
 {
     stub_ble_ready = true;
@@ -37,6 +40,7 @@ void stub_reset_all(void)
     stub_upload_chunk_calls = 0;
     stub_uploaded_bytes = 0;
     stub_upload_active = false;
+    stub_power_sleep_enabled = true;
 }
 
 /* ---- BLE ---- */
@@ -138,5 +142,35 @@ bool script_is_running(void)     { return stub_script_running; }
 int  storage_get_free_space(uint32_t *free_bytes)
 {
     if (free_bytes) *free_bytes = 12345;
+    return 0;
+}
+
+/* ---- Power ---- */
+
+int  power_init(void)            { return 0; }
+int  power_enable_sleep(bool en) { stub_power_sleep_enabled = en; return 0; }
+void power_hold_activity(bool hold) { (void)hold; }
+
+power_state_t power_get_state(void)
+{
+    if (stub_scanning || stub_script_running) return POWER_STATE_ACTIVE;
+    return stub_power_sleep_enabled ? POWER_STATE_LIGHT_SLEEP
+                                    : POWER_STATE_ACTIVE;
+}
+
+int  power_get_current_ma(uint32_t *ma)
+{
+    if (!ma) return -502;
+    if (stub_scanning) *ma = 45;
+    else *ma = stub_power_sleep_enabled ? 8 : 30;
+    return 0;
+}
+
+int  power_get_config(power_config_t *cfg)
+{
+    if (!cfg) return -502;
+    cfg->sleep_enabled = stub_power_sleep_enabled;
+    cfg->idle_timeout_ms = 1000;
+    cfg->usb_suspend_wake = false;
     return 0;
 }

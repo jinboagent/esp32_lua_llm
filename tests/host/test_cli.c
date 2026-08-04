@@ -231,6 +231,38 @@ static void test_script_chunk_hex_validation(void)
     TEST_ASSERT_TRUE(strstr(resp, "invalid hex") != NULL);
 }
 
+static void test_power_commands(void)
+{
+    /* Default: sleep enabled, idle -> light_sleep state */
+    TEST_ASSERT_EQUAL_INT(0, cli_process_command("POWER STATUS", resp, RESP_LEN));
+    TEST_ASSERT_TRUE(strstr(resp, "\"sleep_enabled\":true") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "\"state\":\"light_sleep\"") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "\"est_current_ma\":8") != NULL);
+
+    /* Disable sleep -> active state, higher estimate */
+    TEST_ASSERT_EQUAL_INT(0, cli_process_command("POWER SLEEP OFF", resp, RESP_LEN));
+    TEST_ASSERT_TRUE(strstr(resp, "\"enabled\":false") != NULL);
+    cli_process_command("POWER STATUS", resp, RESP_LEN);
+    TEST_ASSERT_TRUE(strstr(resp, "\"state\":\"active\"") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "\"est_current_ma\":30") != NULL);
+
+    /* Scanning overrides state and estimate */
+    TEST_ASSERT_EQUAL_INT(0, cli_process_command("POWER SLEEP ON", resp, RESP_LEN));
+    cli_process_command("SCAN START", resp, RESP_LEN);
+    cli_process_command("POWER STATUS", resp, RESP_LEN);
+    TEST_ASSERT_TRUE(strstr(resp, "\"state\":\"active\"") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "\"est_current_ma\":45") != NULL);
+    cli_process_command("SCAN STOP", resp, RESP_LEN);
+
+    /* Syntax errors */
+    TEST_ASSERT_EQUAL_INT(CLI_ERR_INVALID_CMD,
+        cli_process_command("POWER", resp, RESP_LEN));
+    TEST_ASSERT_TRUE(strstr(resp, "invalid syntax") != NULL);
+    TEST_ASSERT_EQUAL_INT(CLI_ERR_INVALID_CMD,
+        cli_process_command("POWER NAP", resp, RESP_LEN));
+    TEST_ASSERT_TRUE(strstr(resp, "invalid syntax") != NULL);
+}
+
 /* ---- Entry point --------------------------------------------------------- */
 
 int test_cli_main(void)
@@ -253,6 +285,7 @@ int test_cli_main(void)
     reset_stubs(); cli_init(); RUN_TEST(test_response_buffer_overflow);
     reset_stubs(); cli_init(); RUN_TEST(test_syntax_errors);
     reset_stubs(); cli_init(); RUN_TEST(test_script_chunk_hex_validation);
+    reset_stubs(); cli_init(); RUN_TEST(test_power_commands);
 
     return UNITY_END();
 }
