@@ -24,7 +24,9 @@ extern "C" {
  */
 
 #define SCRIPT_MAX_SIZE      8192
-#define SCRIPT_UPLOAD_TIMEOUT_MS  5000
+/* Inter-chunk timeout. Raised from 5 s to 30 s for the F4.2 text-line
+ * upload protocol, where the host (LLM) may pause between lines. */
+#define SCRIPT_UPLOAD_TIMEOUT_MS  30000
 
 /*
  * Begin a new script upload session.
@@ -42,8 +44,18 @@ int script_upload_chunk(const uint8_t *data, uint16_t len);
 /*
  * Finalize upload: trial-compile, save to LittleFS as /script.lua.
  * Returns -612 on compile error (script NOT saved).
+ *
+ * @param err_buf   Optional buffer receiving the compile error message.
+ * @param err_len   Size of err_buf (0 when err_buf is NULL).
  */
-int script_upload_end(void);
+int script_upload_end(char *err_buf, uint16_t err_len);
+
+/*
+ * Abort an in-progress upload: deactivate the session and invalidate
+ * the buffer cache (a later script_run falls back to the persisted
+ * file). No-op when no upload is active.
+ */
+int script_upload_abort(void);
 
 /*
  * Load the saved script into the Lua engine and activate hooks.

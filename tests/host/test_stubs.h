@@ -1,0 +1,29 @@
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+#include "ble_if.h"
+
+/*
+ * Shared subsystem stubs for host tests (cli, bridge).
+ * Emulate just enough of the ble/lua/script/storage contracts for
+ * protocol- and state-machine-level testing.
+ */
+
+extern bool     stub_ble_ready;
+extern bool     stub_scanning;
+extern bool     stub_script_loaded;
+extern bool     stub_script_running;
+extern uint32_t stub_interval_ms;
+extern int      stub_scan_start_ret;
+extern int      stub_pipeline_start_ret;
+extern int      stub_script_run_ret;
+
+/* script upload stub controls */
+extern int      stub_upload_end_ret;     /* 0 ok, -612 compile err, -704 storage */
+extern uint32_t stub_upload_chunk_calls;
+extern uint32_t stub_uploaded_bytes;
+extern bool     stub_upload_active;
+
+/* Reset every control to its default. */
+void stub_reset_all(void);

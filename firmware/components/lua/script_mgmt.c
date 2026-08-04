@@ -77,7 +77,7 @@ int script_upload_chunk(const uint8_t *data, uint16_t len)
     return 0;
 }
 
-int script_upload_end(void)
+int script_upload_end(char *err_buf, uint16_t err_len)
 {
     if (!s_upload.active) {
         return -611;
@@ -95,10 +95,14 @@ int script_upload_end(void)
     s_upload.buffer[s_upload.total_received] = '\0';
 
     /* Trial compile to catch syntax errors — does NOT execute (B-S3-3 fix) */
-    char err_buf[128] = {0};
-    int ret = lua_engine_compile_check((const char *)s_upload.buffer, err_buf, sizeof(err_buf));
+    char local_err[128] = {0};
+    char *err_dst = (err_buf != NULL && err_len > 0) ? err_buf : local_err;
+    uint16_t err_dst_len = (err_buf != NULL && err_len > 0)
+        ? err_len : (uint16_t)sizeof(local_err);
+    int ret = lua_engine_compile_check((const char *)s_upload.buffer,
+                                       err_dst, err_dst_len);
     if (ret != 0) {
-        printf("Script: compile error: %s\n", err_buf);
+        printf("Script: compile error: %s\n", err_dst);
         return -612;
     }
 
@@ -112,6 +116,22 @@ int script_upload_end(void)
     s_script_loaded = true;
     s_cache_valid = true;  /* buffer content == saved file (L-S3-5 fix) */
     printf("Script: saved %u bytes to %s\n", (unsigned)s_upload.total_received, SCRIPT_PATH);
+    return 0;
+}
+
+int script_upload_abort(void)
+{
+    if (!s_upload.active) {
+        return 0;  /* nothing to abort */
+    }
+
+    s_upload.active = false;
+    s_upload.total_received = 0;
+    memset(s_upload.buffer, 0, sizeof(s_upload.buffer));
+    /* Buffer no longer mirrors any saved file; script_run() falls back
+     * to reading the persisted script (L-S3-5 cache contract). */
+    s_cache_valid = false;
+    printf("Script: upload aborted\n");
     return 0;
 }
 

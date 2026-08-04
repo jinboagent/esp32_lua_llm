@@ -6,7 +6,7 @@ else()
 endif()
 
 idf_component_register(
-    SRCS "main.c"
+    SRCS "lua_llm_bridge.c"
     INCLUDE_DIRS "." "${CMAKE_SOURCE_DIR}/interfaces"
-    REQUIRES usb storage ble cli ${_lua_dep}
+    REQUIRES ${_lua_dep}
 )

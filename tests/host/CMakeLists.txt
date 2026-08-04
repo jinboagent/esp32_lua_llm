@@ -13,21 +13,31 @@ set(UNITY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/unity/src)
 set(SRC_PROTO   ${PROJECT_ROOT}/firmware/components/proto/proto_adv_parse.c)
 set(SRC_JSON    ${PROJECT_ROOT}/firmware/components/json_enc/json_encoder.c)
 set(SRC_FILTER  ${PROJECT_ROOT}/firmware/components/filter/filter_engine.c)
+set(SRC_CLI     ${PROJECT_ROOT}/firmware/components/cli/cli_commands.c)
+set(SRC_BRIDGE  ${PROJECT_ROOT}/firmware/components/bridge/lua_llm_bridge.c)
+set(SRC_STUBS   ${CMAKE_CURRENT_SOURCE_DIR}/test_stubs.c)
 set(SRC_UNITY   ${UNITY_DIR}/unity.c)
 
 set(TEST_MAIN   ${CMAKE_CURRENT_SOURCE_DIR}/test_main.c)
 set(TEST_PROTO  ${CMAKE_CURRENT_SOURCE_DIR}/test_adv_parser.c)
 set(TEST_JSON   ${CMAKE_CURRENT_SOURCE_DIR}/test_json_encoder.c)
 set(TEST_FILTER ${CMAKE_CURRENT_SOURCE_DIR}/test_filter_engine.c)
+set(TEST_CLI    ${CMAKE_CURRENT_SOURCE_DIR}/test_cli.c)
+set(TEST_BRIDGE ${CMAKE_CURRENT_SOURCE_DIR}/test_bridge.c)
 
 add_executable(test_runner
     ${TEST_MAIN}
     ${TEST_PROTO}
     ${TEST_JSON}
     ${TEST_FILTER}
+    ${TEST_CLI}
+    ${TEST_BRIDGE}
     ${SRC_PROTO}
     ${SRC_JSON}
     ${SRC_FILTER}
+    ${SRC_CLI}
+    ${SRC_BRIDGE}
+    ${SRC_STUBS}
     ${SRC_UNITY}
 )
 
@@ -37,4 +47,7 @@ target_include_directories(test_runner PRIVATE
     ${PROJECT_ROOT}/firmware/components/proto
     ${PROJECT_ROOT}/firmware/components/json_enc
     ${PROJECT_ROOT}/firmware/components/filter
+    ${PROJECT_ROOT}/firmware/components/cli
+    ${PROJECT_ROOT}/firmware/components/bridge
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
