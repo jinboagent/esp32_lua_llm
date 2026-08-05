@@ -1,7 +1,24 @@
+# Build output
 build/
 build_output.txt
 managed_components/
+
+# AI / IDE tooling state
 .claude/
-trace/
 .aider*
 .vscode/
+trace/
+
+# Vendored third-party source — never edited in this project
+firmware/components/lua/src/
+
+# Archived documents (historical reference only, not session context)
+docs/archive/
+bug_check/archive/
+
+# Session logs / test output
+build_check.txt
+flash_check.txt
+tests/host/build_log.txt
+hw_bridge_out.txt
+hw_power_out.txt

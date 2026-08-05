@@ -1,28 +1,21 @@
-# Future Feature Specifications (Stage 2-4)
+# Future Feature Specifications (v2+)
 
-> ⚠️ **These files are intentionally NOT auto-loaded as LLM context.**
+> ⚠️ **Files here are intentionally NOT auto-loaded as LLM context.**
 >
-> They describe features not yet implemented. Loading them in every session would
-> waste ~40% of the context window (~1,742 lines / ~88 KB across 8 files).
->
-> When work begins on a new stage, move the relevant files back to `harness/01-features/`.
+> All v1 stages (0–4, 13 features) are implemented and live in
+> `harness/01-features/`. This directory now holds v2+ specs only.
 
-## Contents
+## Current contents
 
-| Stage | Files | Status |
-|-------|-------|--------|
-| **Stage 2** — BLE Core | `feature_ble_scan.md`, `feature_nimble_init.md`, `feature_scan_pipeline.md` | Not started |
-| **Stage 3** — Lua | `feature_lua_port.md`, `feature_lua_script_mgmt.md` | Not started |
-| **Stage 4** — Integration | `feature_cli_commands.md`, `feature_lua_llm_bridge.md`, `feature_power_management.md` | Not started |
+None yet. Documented v2 candidates (see `bug_check/README.md` deferred list
+and `docs/archive/qwen_featuer.md` §11):
 
-## How to Activate a Stage
+| Candidate | Notes |
+|-----------|-------|
+| BLE connections (GATT client) | scan-only in v1 |
+| USB suspend detection | no suspend signal exposed by USB-Serial/JTAG on this hardware |
+| PMIC-based current measurement | v1 `POWER STATUS` figures are firmware estimates |
+| WiFi standalone mode / web dashboard | v1 is PC-tethered by design |
 
-When you're ready to implement Stage N:
-
-```bash
-mv harness/02-future/stage<N>-*/ harness/01-features/
-```
-
-This makes the feature docs visible to the LLM context loader. After implementation,
-consider whether to keep the doc in `01-features/` (if still useful for reference)
-or move it back.
+When a v2 feature gets specced, add `feature_<name>.md` here and move it to
+`harness/01-features/<stage>/` when implementation starts.
