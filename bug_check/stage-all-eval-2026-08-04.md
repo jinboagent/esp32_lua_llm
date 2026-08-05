@@ -1,5 +1,10 @@
 # 全阶段 Bug 状态 — 2026-08-04
 
+> ✅ **全部关闭 (2026-08-05 核验)** — 下方 28 个"剩余"项已在 commit `1eb7d04`
+> 全部处理 (23 fixed / 2 deferred-by-design / 3 rejected)，核验证据见
+> `bug_fix_report/fix-report-2026-08-05-backlog-verification.md`。
+> 本文档保留为历史记录。
+
 > 上次评估后通过 3 个 fix commit 修复了 23 个 bug。当前剩余 28 个。
 
 ---
@@ -34,7 +39,7 @@
 
 ---
 
-## 剩余 Bug (28 个)
+## 剩余 Bug (28 个) — 已全部关闭，见文档顶部说明
 
 ### Stage 0-1 (6 个)
 

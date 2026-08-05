@@ -1,55 +1,36 @@
 # Bug Tracking — BLE Sniffer Dongle
 
-> Consolidated index. Original detailed reports archived in `archive/`.
+> Consolidated index. **All reported bugs resolved as of 2026-08-05** (firmware v1.0.0).
+> Historical evaluation reports linked below; early reports archived in `archive/`.
 
-## Summary
+## Status: ALL BACKLOGS CLOSED ✅
 
-| Severity | Total | Fixed | Deferred |
-|----------|-------|-------|----------|
-| 🔴 Critical | 4 | 3 | 1 (B4: sdkconfig NimBLE) |
-| 🟠 Medium | 12 | 4 | 8 |
-| 🟡 Low | 10 | 1 | 9 |
-| 🔵 Architecture | 4 | 0 | 4 |
-| **Total** | **30** | **8** | **22** |
+| Evaluation | Bugs | Outcome | Report |
+|------------|:----:|---------|--------|
+| Initial eval (2026-07-18/19) | 30 + 6 | all fixed (≤ `d69f65e`) | [`archive/bug_fix_report/fix-report-2026-07-19.md`](archive/bug_fix_report/fix-report-2026-07-19.md) |
+| Stage evals (2026-07-21) | 66 | superseded by the 2026-08-04 all-stage re-evaluation | [`stage0-1-eval`](stage0-1-eval-2026-07-21.md), [`stage2-3-eval`](stage2-3-eval-2026-07-21.md), [`stage4-eval`](stage4-eval-2026-07-21.md) |
+| All-stage (2026-08-04) | 28 remaining | 23 fixed, 2 deferred-by-design, 3 rejected | [`fix-report-2026-08-04.md`](bug_fix_report/fix-report-2026-08-04.md) |
+| Stage 4 vs v1.0.0 (2026-08-04) | 16 + module gaps | 14 fixed by Stage 4 implementation, 2 fixed (`e8427c2`), 1 deferred (USB suspend → v2) | [`fix-report-2026-08-04-stage4-vs-v1.0.0.md`](bug_fix_report/fix-report-2026-08-04-stage4-vs-v1.0.0.md) |
+| Backlog verification (2026-08-05) | 28 re-verified | **0 genuine remainders** — tracker had gone stale; every item already closed (`1eb7d04`) | [`fix-report-2026-08-05-backlog-verification.md`](bug_fix_report/fix-report-2026-08-05-backlog-verification.md) |
 
-## Fixed (9 issues)
+## Deferred to v2 (documented, accepted)
 
-| ID | Description | Commit |
-|----|-------------|--------|
-| B1 | JSON encoder stack buffer overflow | d69f65e |
-| B2 | Wildcard recursive DoS | d69f65e |
-| B3 | LittleFS partition table missing | d69f65e |
-| M2 | flags/tx_power not copied from NimBLE fields | d69f65e |
-| M5 | NULL filter_evaluate crash | d69f65e |
-| M9 | Missing extern "C" in headers | d69f65e |
-| M10 | test_main exit code wrong | d69f65e |
-| L2 | MAC address length check | d69f65e |
-| L7 | Static helpers should be in .c | d69f65e |
+| Item | Reason |
+|------|--------|
+| USB suspend detection | USB-Serial/JTAG exposes no bus-suspend signal on this hardware |
+| PMIC current measurement | `POWER STATUS` current figures are firmware estimates |
+| M-S2-3 scan-queue deletion / M-S2-5 `pipeline_deinit` | Lifecycle by design (queue reused + `xQueueReset`; infinite-loop task) |
 
-## New Bugs Found (2026-07-19, post-refactor)
+## Known divergences (spec vs code, decisions pending)
 
-6 new issues found after Stage 0 implementation. See `archive/new_bugs_2026-07-19_00-00-58.md` for details.
+1. `transform` hook signature — spec: `transform(addr, parsed_table)`; impl: `transform(addr, json_string)`. Impl kept (friendlier for LLM-generated scripts). Needs an explicit spec-vs-code decision.
+2. `lua_engine_deinit` vs concurrent lock waiters — mitigated by "never deinit while scanning"; a full fix needs an engine refcount.
 
-## Latest Evaluations
+## Verification state (2026-08-05, firmware v1.0.0)
 
-### Stage 0-1 (2026-07-21)
-See [`stage0-1-eval-2026-07-21.md`](stage0-1-eval-2026-07-21.md) — **15 bugs** (4 critical, 5 medium, 6 low)
-
-### Stage 2-3 (2026-07-21)
-See [`stage2-3-eval-2026-07-21.md`](stage2-3-eval-2026-07-21.md) — **35 bugs** (11 critical, 14 medium, 10 low)
-
-**Top 3 critical across all stages:**
-| ID | Stage | Description |
-|----|-------|-------------|
-| B-S3-2 | Stage 3 | **Sandbox bypass** — blocklist allows LLM scripts to recover dangerous libs (debug/io) |
-| B-S3-4 | Stage 3 | **No mutex on lua_State** — two FreeRTOS tasks race on Lua VM |
-| B-S2-4 | Stage 2 | **False dedup** — weak XOR hash silently drops legitimate device data |
-
-### Key Open Issues (from previous evaluations)
-
-- **B4 (old)**: NimBLE config missing from sdkconfig.defaults
-- **N5 (old, fixed?)**: VFS leak on storage init partial failure — appears fixed in current code
-- **N6 (old)**: Partial write leaves incomplete file
+- Host tests: **67/67** (adv parser, JSON encoder, filter, CLI, bridge)
+- `test_bridge_hw.py`: **32/32** on COM12
+- `test_power_hw.py`: **14/14** on COM12
 
 ## Archive
 

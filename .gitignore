@@ -37,3 +37,10 @@ __pycache__/
 
 #Debug Log
 trace/
+
+# Session logs / test output
+build_check.txt
+flash_check.txt
+tests/host/build_log.txt
+hw_bridge_out.txt
+hw_power_out.txt
