@@ -3,6 +3,7 @@
 #include "storage_if.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -18,8 +19,10 @@ typedef struct {
 } script_upload_ctx_t;
 
 static script_upload_ctx_t s_upload = {0};
-static bool s_script_loaded = false;
-static bool s_script_running = false;
+/* B1 fix: written by the CLI task, read by the pipeline task — same race
+ * class as the already-atomic s_running/s_scanning flags. */
+static atomic_bool s_script_loaded = false;
+static atomic_bool s_script_running = false;
 /* L-S3-5 fix: s_upload.buffer doubles as a cache of the last saved script,
  * so script_run() doesn't re-read LittleFS on every call. Invalidated as
  * soon as a new upload starts touching the buffer. */
@@ -113,7 +116,7 @@ int script_upload_end(char *err_buf, uint16_t err_len)
         return -704;
     }
 
-    s_script_loaded = true;
+    atomic_store(&s_script_loaded, true);  /* B1 fix: atomic (read by pipeline task) */
     s_cache_valid = true;  /* buffer content == saved file (L-S3-5 fix) */
     printf("Script: saved %u bytes to %s\n", (unsigned)s_upload.total_received, SCRIPT_PATH);
     return 0;
@@ -137,10 +140,10 @@ int script_upload_abort(void)
 
 int script_run(void)
 {
-    if (!s_script_loaded) {
+    if (!atomic_load(&s_script_loaded)) {
         return -611;
     }
-    if (s_script_running) {
+    if (atomic_load(&s_script_running)) {
         return 0; /* already running */
     }
 
@@ -170,14 +173,14 @@ int script_run(void)
         return ret;
     }
 
-    s_script_running = true;
+    atomic_store(&s_script_running, true);  /* B1 fix: atomic (read by pipeline task) */
     printf("Script: running\n");
     return 0;
 }
 
 int script_stop(void)
 {
-    if (!s_script_running) {
+    if (!atomic_load(&s_script_running)) {
         return 0;
     }
 
@@ -185,7 +188,7 @@ int script_stop(void)
      * the hook functions from the Lua global table. Per spec (Script Stop),
      * the compiled script is released from the engine — without this, stale
      * hooks lingered in globals after stop (M-S3-3 fix). */
-    s_script_running = false;
+    atomic_store(&s_script_running, false);  /* B1 fix */
     lua_engine_clear_func("on_adv");
     lua_engine_clear_func("transform");
 
@@ -195,10 +198,10 @@ int script_stop(void)
 
 bool script_is_loaded(void)
 {
-    return s_script_loaded;
+    return atomic_load(&s_script_loaded);
 }
 
 bool script_is_running(void)
 {
-    return s_script_running;
+    return atomic_load(&s_script_running);
 }

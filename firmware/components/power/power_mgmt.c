@@ -74,7 +74,15 @@ int power_init(void)
                                            "ble_activity", &s_activity_lock);
         if (err != ESP_OK) {
             s_activity_lock = NULL;
-            printf("Power: activity lock create failed (%d)\n", (int)err);
+            /* B2 fix: without the activity lock the SoC could light-sleep
+             * mid-scan and the console TX FIFO would drop output. Fail
+             * safe: keep the device awake and return an error so the boot
+             * log surfaces the problem instead of silently degrading. */
+            s_config.sleep_enabled = false;
+            printf("Power: activity lock create failed (%d) — "
+                   "light sleep disabled\n", (int)err);
+            s_apply_policy();
+            return -1;
         }
     }
 #endif

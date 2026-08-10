@@ -416,6 +416,16 @@ static int h_lua(const char *action, char *response, uint16_t response_len)
     }
 
     if (strcmp(action, "DEINIT") == 0) {
+        /* B6 fix: refuse deinit while the pipeline may still invoke Lua
+         * hooks or wait on the engine lock — lua_engine_deinit deletes the
+         * mutex, so tearing the engine down mid-scan races the pipeline
+         * task. Stop scanning/scripts first. */
+        if (ble_scan_is_active() || script_is_running()) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_deinit\","
+                "\"code\":-911,\"msg\":\"stop scanning and scripts first\"}");
+            return 0;
+        }
         int ret = lua_engine_deinit();
         if (ret == 0) {
             CLI_EMIT(response, response_len,

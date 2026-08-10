@@ -117,7 +117,6 @@ typedef struct {
 static void *s_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 {
     lua_alloc_ctx_t *ctx = (lua_alloc_ctx_t *)ud;
-    (void)osize;
 
     if (nsize == 0) {
         /* Estimate freed size from pool header */
@@ -130,8 +129,17 @@ static void *s_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
         return NULL;
     }
 
+    /* B4 fix: guard against the aligned size — what the pool actually
+     * charges — not the raw request size. Checking the unaligned size
+     * while accounting the aligned size made ctx->used drift past the
+     * soft limit over many alloc/free cycles. */
+    size_t asize = (nsize + POOL_ALIGN - 1) & ~(POOL_ALIGN - 1);
+    if (asize == 0) {
+        asize = POOL_ALIGN;
+    }
+
     if (ptr == NULL) {
-        if (ctx->used + nsize + POOL_HDR > ctx->limit) {
+        if (ctx->used + asize + POOL_HDR > ctx->limit) {
             return NULL;
         }
         void *p = s_pool_alloc(nsize);
@@ -143,7 +151,7 @@ static void *s_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
     }
 
     /* Resize */
-    if (ctx->used + nsize > ctx->limit + osize) {
+    if (ctx->used + asize > ctx->limit + osize) {
         return NULL;
     }
     void *p = s_pool_realloc(ptr, nsize);

@@ -8,6 +8,7 @@
 #include "ble_if.h"
 #include "lua_if.h"
 #include "cli_if.h"
+#include "bridge_if.h"
 #include "power_if.h"
 
 void app_main(void)
@@ -57,6 +58,13 @@ void app_main(void)
     ret = lua_engine_init();
     if (ret != 0) {
         printf("WARNING: Lua engine init failed (%d)\n", ret);
+    }
+
+    /* Initialize LLM bridge (text-line script upload state machine).
+     * B3 fix: was never called — it only worked by static zero-init. */
+    ret = bridge_init();
+    if (ret != 0) {
+        printf("WARNING: Bridge init failed (%d)\n", ret);
     }
 
     /* Initialize power management (automatic light sleep when idle) */

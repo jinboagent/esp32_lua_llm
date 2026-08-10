@@ -44,7 +44,10 @@ static uint8_t s_dedup_hash(const uint8_t addr[6])
 
 static bool s_dedup_check(const uint8_t addr[6])
 {
-    int64_t now_us = esp_timer_get_time();
+    /* B7 fix: esp_timer_get_time() starts at 0 at boot, which collides
+     * with the 0 = "empty slot" sentinel below. Shift by 1 µs so a
+     * recorded timestamp can never be mistaken for an empty slot. */
+    int64_t now_us = esp_timer_get_time() + 1;
     uint8_t idx = s_dedup_hash(addr);
     bool duplicate = false;
     bool recorded = false;

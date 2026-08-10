@@ -200,6 +200,10 @@ int pipeline_get_stats(pipeline_stats_t *stats)
     if (stats == NULL) {
         return -802;
     }
+    /* B5 accepted (2026-08-10 eval): the pipeline task may increment fields
+     * during this copy, so the snapshot can be transiently inconsistent.
+     * The counters are single-writer advisory observability data — a lock
+     * on the hot path is not worth it for STATUS display. */
     *stats = s_stats;
     return 0;
 }
