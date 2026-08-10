@@ -44,3 +44,7 @@ flash_check.txt
 tests/host/build_log.txt
 hw_bridge_out.txt
 hw_power_out.txt
+hw_script_out.txt
+hw_lua_out.txt
+host_build.txt
+host_test.txt

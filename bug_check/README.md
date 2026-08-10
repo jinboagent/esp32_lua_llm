@@ -1,6 +1,6 @@
 # Bug Tracking — BLE Sniffer Dongle
 
-> Consolidated index. **All reported bugs resolved as of 2026-08-05** (firmware v1.0.0).
+> Consolidated index. **All reported bugs resolved as of 2026-08-10** (firmware v1.0.0).
 > Historical evaluation reports linked below; early reports archived in `archive/`.
 
 ## Status: ALL BACKLOGS CLOSED ✅
@@ -12,6 +12,7 @@
 | All-stage (2026-08-04) | 28 remaining | 23 fixed, 2 deferred-by-design, 3 rejected | [`fix-report-2026-08-04.md`](bug_fix_report/fix-report-2026-08-04.md) |
 | Stage 4 vs v1.0.0 (2026-08-04) | 16 + module gaps | 14 fixed by Stage 4 implementation, 2 fixed (`e8427c2`), 1 deferred (USB suspend → v2) | [`fix-report-2026-08-04-stage4-vs-v1.0.0.md`](bug_fix_report/fix-report-2026-08-04-stage4-vs-v1.0.0.md) |
 | Backlog verification (2026-08-05) | 28 re-verified | **0 genuine remainders** — tracker had gone stale; every item already closed (`1eb7d04`) | [`fix-report-2026-08-05-backlog-verification.md`](bug_fix_report/fix-report-2026-08-05-backlog-verification.md) |
+| **v1.0.0 re-eval (2026-08-05)** | **7 found** | **All closed 2026-08-10**: 6 fixed (B1 atomic script flags, B2 PM lock-failure safety, B3 `bridge_init` call, B4 allocator accounting, B6 deinit guard, B7 dedup sentinel), 1 accepted + documented (B5 stats snapshot) | [`stage-all-eval-2026-08-05.md`](stage-all-eval-2026-08-05.md), [`fix-report-2026-08-10-eval-2026-08-05.md`](bug_fix_report/fix-report-2026-08-10-eval-2026-08-05.md) |
 
 ## Deferred to v2 (documented, accepted)
 
@@ -24,13 +25,14 @@
 ## Known divergences (spec vs code, decisions pending)
 
 1. `transform` hook signature — spec: `transform(addr, parsed_table)`; impl: `transform(addr, json_string)`. Impl kept (friendlier for LLM-generated scripts). Needs an explicit spec-vs-code decision.
-2. `lua_engine_deinit` vs concurrent lock waiters — mitigated by "never deinit while scanning"; a full fix needs an engine refcount.
+2. `lua_engine_deinit` vs concurrent lock waiters — the race window is now closed in practice: the CLI refuses `LUA DEINIT` while scanning or a script runs (`-911`, B6 fix 2026-08-10). A full refcount-based fix remains a v2 candidate.
 
-## Verification state (2026-08-05, firmware v1.0.0)
+## Verification state (2026-08-10, firmware v1.0.0)
 
 - Host tests: **67/67** (adv parser, JSON encoder, filter, CLI, bridge)
 - `test_bridge_hw.py`: **32/32** on COM12
 - `test_power_hw.py`: **14/14** on COM12
+- `test_script.py` / `test_lua.py`: state guards, sandbox and timeout behavior as specified
 
 ## Archive
 
