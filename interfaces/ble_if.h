@@ -32,6 +32,7 @@ typedef struct {
     int8_t   rssi;
     uint8_t  adv_data_len;  /* 0..31 */
     uint8_t  adv_data[BLE_ADV_DATA_MAX_LEN];
+    uint32_t ts_ms;         /* N1 fix: reception time, ms since boot */
 } adv_report_raw_t;
 
 /* Pipeline statistics */

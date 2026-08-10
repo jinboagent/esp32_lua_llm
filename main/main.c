@@ -3,6 +3,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "esp_system.h"
+
 #include "usb_if.h"
 #include "storage_if.h"
 #include "ble_if.h"
@@ -14,6 +16,10 @@
 void app_main(void)
 {
     printf("\n=== BLE Sniffer Dongle v1.0.0 ===\n");
+    /* Boot observability: esp_reset_reason() — 1=poweron, 3=sw, 4=panic,
+     * 6=task-wdt, 9=brownout, 11=USB. USB resets occur when the host
+     * closes the COM port mid-scan (USB-Serial/JTAG chip behavior). */
+    printf("Reset reason: %d\n", (int)esp_reset_reason());
     printf("Commands: STATUS, VERSION, SCAN START/STOP/INTERVAL, "
            "FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/DEINIT, "
            "SCRIPT LOAD/BEGIN/CHUNK/END/RUN/STOP/STATUS, POWER\n\n");

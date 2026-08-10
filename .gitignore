@@ -48,3 +48,10 @@ hw_script_out.txt
 hw_lua_out.txt
 host_build.txt
 host_test.txt
+hw_ble_scan_out.txt
+hw_status_out.txt
+hw_capture_out.txt
+hw_repro_out.txt
+hw_reset_out.txt
+hw_isolate_out.txt
+hw_uptime_probe.txt

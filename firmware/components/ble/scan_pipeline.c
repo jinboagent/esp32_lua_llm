@@ -61,6 +61,7 @@ static void s_pipeline_task_func(void *param)
         memcpy(parsed.addr, raw.addr, 6);
         parsed.addr_type = raw.addr_type;
         parsed.rssi = raw.rssi;
+        parsed.ts_ms = raw.ts_ms;  /* N1 fix: propagate reception timestamp */
 
         /* 3. Filter (locked to prevent concurrent CLI modification, B-S3-6 fix) */
         if (s_filter_engine != NULL) {

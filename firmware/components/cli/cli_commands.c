@@ -15,6 +15,8 @@
 #include <string.h>
 #include <stdarg.h>
 
+#include "esp_system.h"
+
 #include "cli_if.h"
 #include "ble_if.h"
 #include "lua_if.h"
@@ -121,6 +123,7 @@ static int h_status(char *response, uint16_t response_len)
     CLI_EMIT(response, response_len,
         "{\"status\":\"ok\",\"cmd\":\"status\","
         "\"state\":\"%s\","
+        "\"reset_reason\":%d,"
         "\"scanning\":%s,"
         "\"queue_drops\":%lu,"
         "\"filter_count\":%d,"
@@ -131,6 +134,9 @@ static int h_status(char *response, uint16_t response_len)
         "\"pipeline\":{\"received\":%lu,\"filtered\":%lu,"
         "\"output\":%lu,\"parse_err\":%lu,\"encode_err\":%lu}}",
         state_name,
+        /* Boot observability: how this boot happened (11 = USB reset,
+         * which the host triggers by closing the port mid-scan) */
+        (int)esp_reset_reason(),
         ble_scan_is_active() ? "true" : "false",
         (unsigned long)ble_scan_get_drop_count(),
         filter_get_count(&s_filter_engine),

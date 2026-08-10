@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "host/ble_gap.h"
+#include "host/ble_hs.h"
 #include "esp_timer.h"
 
 /* Dedup table entry */
@@ -99,6 +100,40 @@ static bool s_dedup_check(const uint8_t addr[6])
     return duplicate;
 }
 
+static int s_gap_event_handler(struct ble_gap_event *event, void *arg);
+
+/* Build discovery parameters from the current interval/window and start a
+ * NimBLE discovery window. Shared by ble_scan_start and the DISC_COMPLETE
+ * restart (N2 fix). Returns 0 on success, NimBLE error code otherwise. */
+static int s_start_discovery(void)
+{
+    /* Configure scan parameters.
+     * Clamp converted values to the BLE spec range for scan interval/window
+     * (0x0004..0x4000 in 0.625 ms units) as defense in depth (L-S2-2 fix). */
+    uint16_t itvl = (uint16_t)((s_interval_ms * 1000) / 625);
+    uint16_t window = (uint16_t)((s_window_ms * 1000) / 625);
+    if (itvl < 0x0004) itvl = 0x0004;
+    if (itvl > 0x4000) itvl = 0x4000;
+    if (window < 0x0004) window = 0x0004;
+    if (window > 0x4000) window = 0x4000;
+    if (window > itvl) window = itvl;
+
+    struct ble_gap_disc_params params = {
+        .itvl = itvl,
+        .window = window,
+        .passive = 1,
+        .filter_duplicates = 0,
+    };
+
+    /* N2 fix (final): scan forever instead of NimBLE's default 10.24 s
+     * windows. duration=0 maps to the default window and forces a
+     * DISC_COMPLETE restart cycle, whose first event can be lost when a
+     * scan starts right after boot. BLE_HS_FOREVER gives one continuous
+     * discovery; the DISC_COMPLETE handler below stays as a fallback. */
+    return ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &params,
+                        s_gap_event_handler, NULL);
+}
+
 static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
 {
     switch (event->type) {
@@ -115,6 +150,9 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
         memcpy(report.addr, disc->addr.val, 6);
         report.addr_type = disc->addr.type;
         report.rssi = disc->rssi;
+        /* N1 fix: timestamp at reception (ms since boot) — was never set,
+         * so every JSON line carried "ts":0 */
+        report.ts_ms = (uint32_t)(esp_timer_get_time() / 1000);
 
         uint8_t data_len = disc->length_data;
         if (data_len > BLE_ADV_DATA_MAX_LEN) {
@@ -131,7 +169,18 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
     }
 
     case BLE_GAP_EVENT_DISC_COMPLETE:
-        atomic_store(&s_scanning, false);
+        /* N2 fix: NimBLE discovery runs in finite-duration windows. A
+         * continuous sniffer must start the next window here — the old
+         * code just marked the scan over, so every scan died after ~10 s.
+         * ble_scan_stop clears s_scanning before cancelling, so a
+         * user-requested stop never restarts. */
+        if (atomic_load(&s_scanning)) {
+            int rc = s_start_discovery();
+            if (rc != 0) {
+                atomic_store(&s_scanning, false);
+                printf("BLE: scan restart failed (%d) — scanning stopped\n", rc);
+            }
+        }
         break;
 
     default:
@@ -168,25 +217,7 @@ int ble_scan_start(void)
     memset(s_dedup, 0, sizeof(s_dedup));
     portEXIT_CRITICAL(&s_dedup_mux);
 
-    /* Configure scan parameters.
-     * Clamp converted values to the BLE spec range for scan interval/window
-     * (0x0004..0x4000 in 0.625 ms units) as defense in depth (L-S2-2 fix). */
-    uint16_t itvl = (uint16_t)((s_interval_ms * 1000) / 625);
-    uint16_t window = (uint16_t)((s_window_ms * 1000) / 625);
-    if (itvl < 0x0004) itvl = 0x0004;
-    if (itvl > 0x4000) itvl = 0x4000;
-    if (window < 0x0004) window = 0x0004;
-    if (window > 0x4000) window = 0x4000;
-    if (window > itvl) window = itvl;
-
-    struct ble_gap_disc_params params = {
-        .itvl = itvl,
-        .window = window,
-        .passive = 1,
-        .filter_duplicates = 0,
-    };
-
-    int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, 0, &params, s_gap_event_handler, NULL);
+    int rc = s_start_discovery();
     if (rc != 0) {
         printf("BLE: scan start failed: %d\n", rc);
         return -1;
@@ -204,13 +235,16 @@ int ble_scan_stop(void)
         return -411;
     }
 
+    /* N2 fix: clear the flag BEFORE cancelling — the cancel triggers
+     * BLE_GAP_EVENT_DISC_COMPLETE, and the handler only restarts
+     * discovery while s_scanning is still true. */
+    atomic_store(&s_scanning, false);
+
     int rc = ble_gap_disc_cancel();
     if (rc != 0 && rc != BLE_HS_EALREADY) {
         printf("BLE: scan stop failed: %d\n", rc);
         return -1;
     }
-
-    atomic_store(&s_scanning, false);
 
     /* Drain stale reports so a consumer that reads after stop never sees
      * data from the stopped scan (L4 fix) */
