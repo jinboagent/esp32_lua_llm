@@ -56,3 +56,4 @@ hw_reset_out.txt
 hw_isolate_out.txt
 hw_uptime_probe.txt
 hw_crlf_out.txt
+hw_sim_out.txt
