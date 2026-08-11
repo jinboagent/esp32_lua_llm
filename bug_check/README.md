@@ -5,7 +5,7 @@
 > Remaining: H4 watch item (Lua pool fragmentation — needs soak test).
 > Historical evaluation reports linked below; early reports archived in `archive/`.
 
-## Status: H1/H2/H3 RESOLVED ✅ (H4 watch item open)
+## Status: H1/H2/H3 RESOLVED ✅ (H4 soak in progress)
 
 | Evaluation | Bugs | Outcome | Report |
 |------------|:----:|---------|--------|
