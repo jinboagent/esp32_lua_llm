@@ -102,7 +102,7 @@ Connect to the USB-Serial/JTAG console (COM12 @ 115200). Commands:
 
 | Command | Effect |
 |---------|--------|
-| `STATUS` | state, scanning, queue_drops, filter_count, lua_ready, script_loaded/running, free_storage, pipeline stats |
+| `STATUS` | state, scanning, queue_drops, filter_count, lua_ready, script_loaded/running, free_storage, free_heap, lua_pool used/peak, pipeline stats |
 | `VERSION` | firmware version (`1.0.0`) |
 | `SCAN START` / `SCAN STOP` | start/stop passive scan (advertisements stream as JSON lines) |
 | `SCAN INTERVAL <ms>` | set scan interval (10..10000) |

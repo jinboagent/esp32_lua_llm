@@ -186,6 +186,10 @@ static void test_status_fields(void)
     TEST_ASSERT_TRUE(strstr(resp, "\"state\":\"idle\"") != NULL);
     TEST_ASSERT_TRUE(strstr(resp, "\"scanning\":false") != NULL);
     TEST_ASSERT_TRUE(strstr(resp, "\"free_storage\":12345") != NULL);
+    /* H4 metrics present (stubbed pool values) */
+    TEST_ASSERT_TRUE(strstr(resp, "\"free_heap\":") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp,
+        "\"lua_pool\":{\"used\":1111,\"peak\":2222}") != NULL);
 
     cli_process_command("SCAN START", resp, RESP_LEN);
     cli_process_command("STATUS", resp, RESP_LEN);

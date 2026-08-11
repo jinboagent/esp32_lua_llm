@@ -81,6 +81,12 @@ int lua_engine_exec(const char *script, char *result, uint16_t result_len);
 bool lua_engine_is_ready(void);
 
 /*
+ * Lua static-pool observability (H4): current and peak bytes in use.
+ * Either pointer may be NULL. Values are 0 before lua_engine_init().
+ */
+void lua_engine_pool_stats(uint32_t *used, uint32_t *peak);
+
+/*
  * Check if a Lua global function exists.
  *
  * @param name  Function name (null-terminated).

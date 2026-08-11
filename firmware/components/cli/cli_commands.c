@@ -116,6 +116,10 @@ static int h_status(char *response, uint16_t response_len)
     uint32_t free_space = 0;
     storage_get_free_space(&free_space);
 
+    /* H4 observability: system heap + Lua static-pool pressure */
+    uint32_t lua_used = 0, lua_peak = 0;
+    lua_engine_pool_stats(&lua_used, &lua_peak);
+
     const char *state_name = "idle";
     cli_state_t st = cli_get_state();
     if (st == CLI_STATE_SCANNING) state_name = "scanning";
@@ -132,6 +136,8 @@ static int h_status(char *response, uint16_t response_len)
         "\"script_loaded\":%s,"
         "\"script_running\":%s,"
         "\"free_storage\":%lu,"
+        "\"free_heap\":%lu,"
+        "\"lua_pool\":{\"used\":%lu,\"peak\":%lu},"
         "\"pipeline\":{\"received\":%lu,\"filtered\":%lu,"
         "\"output\":%lu,\"parse_err\":%lu,\"encode_err\":%lu}}",
         state_name,
@@ -145,6 +151,9 @@ static int h_status(char *response, uint16_t response_len)
         script_is_loaded() ? "true" : "false",
         script_is_running() ? "true" : "false",
         (unsigned long)free_space,
+        (unsigned long)esp_get_free_heap_size(),
+        (unsigned long)lua_used,
+        (unsigned long)lua_peak,
         (unsigned long)stats.total_received,
         (unsigned long)stats.total_filtered,
         (unsigned long)stats.total_output,
