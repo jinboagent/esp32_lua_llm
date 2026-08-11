@@ -430,6 +430,17 @@ bool lua_engine_is_ready(void)
     return s_initialized;
 }
 
+void lua_engine_pool_stats(uint32_t *used, uint32_t *peak)
+{
+    /* H4 observability: read-only snapshot of the static pool accounting */
+    if (used != NULL) {
+        *used = (uint32_t)s_pool_used;
+    }
+    if (peak != NULL) {
+        *peak = (uint32_t)s_peak_used;
+    }
+}
+
 int lua_engine_has_func(const char *name)
 {
     if (name == NULL) {

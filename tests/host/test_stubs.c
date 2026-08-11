@@ -81,6 +81,11 @@ int  pipeline_get_stats(pipeline_stats_t *stats)
 void lua_engine_lock(void)       {}
 void lua_engine_unlock(void)     {}
 bool lua_engine_is_ready(void)   { return true; }
+void lua_engine_pool_stats(uint32_t *used, uint32_t *peak)
+{
+    if (used != NULL) *used = 1111;
+    if (peak != NULL) *peak = 2222;
+}
 int  lua_engine_init(void)       { return 0; }
 int  lua_engine_deinit(void)     { return 0; }
 int  lua_engine_exec(const char *script, char *result, uint16_t result_len)

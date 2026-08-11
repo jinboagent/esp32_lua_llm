@@ -29,3 +29,9 @@ static inline esp_reset_reason_t esp_reset_reason(void)
 {
     return ESP_RST_SW;
 }
+
+/* H4: STATUS also reports free heap; a fixed value is fine on host */
+static inline uint32_t esp_get_free_heap_size(void)
+{
+    return 123456;
+}
