@@ -82,11 +82,11 @@ int usb_console_read_line(char *buf, uint16_t buf_len, uint32_t timeout_ms)
             continue;
         }
 
-        if (c == '\r') {
-            continue; /* Ignore CR */
-        }
-
-        if (c == '\n') {
+        if (c == '\n' || c == '\r') {
+            /* Both CR and LF terminate a line so interactive terminals
+             * work (PuTTY/Tera Term send bare CR on Enter; scripts send
+             * LF). A CRLF pair yields one command plus an empty line,
+             * which the caller ignores (length 0). */
             buf[pos] = '\0';
             return (int)pos;
         }
