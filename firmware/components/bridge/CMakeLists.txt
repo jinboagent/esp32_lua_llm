@@ -8,5 +8,5 @@ endif()
 idf_component_register(
     SRCS "lua_llm_bridge.c"
     INCLUDE_DIRS "." "${CMAKE_SOURCE_DIR}/interfaces"
-    REQUIRES ${_lua_dep}
+    REQUIRES json_enc ${_lua_dep}
 )

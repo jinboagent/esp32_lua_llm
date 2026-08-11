@@ -1,5 +1,61 @@
 #include "json_if.h"
+#include <stdio.h>
 #include <string.h>
+
+/*
+ * Shared helper (H1 fix): escape dynamic text for safe embedding in a
+ * JSON string literal. Pure C — used by both the ESP32 and host builds.
+ */
+int json_escape_str(const char *in, char *out, uint16_t out_len)
+{
+    if (in == NULL || out == NULL) {
+        return -202;
+    }
+    if (out_len < 2) {
+        return -203;
+    }
+
+    uint16_t pos = 0;
+    for (const unsigned char *p = (const unsigned char *)in; *p != '\0'; p++) {
+        char esc_buf[8];
+        const char *esc = NULL;
+
+        if (*p == '"') {
+            esc = "\\\"";
+        } else if (*p == '\\') {
+            esc = "\\\\";
+        } else if (*p == '\n') {
+            esc = "\\n";
+        } else if (*p == '\r') {
+            esc = "\\r";
+        } else if (*p == '\t') {
+            esc = "\\t";
+        } else if (*p == '\b') {
+            esc = "\\b";
+        } else if (*p == '\f') {
+            esc = "\\f";
+        } else if (*p < 0x20) {
+            snprintf(esc_buf, sizeof(esc_buf), "\\u%04x", (unsigned)*p);
+            esc = esc_buf;
+        }
+
+        if (esc == NULL) {
+            if (pos >= out_len - 1) {
+                break;  /* truncate; output stays valid JSON */
+            }
+            out[pos++] = (char)*p;
+        } else {
+            uint16_t esc_len = (uint16_t)strlen(esc);
+            if (pos + esc_len > out_len - 1) {
+                break;  /* never split an escape sequence */
+            }
+            memcpy(out + pos, esc, esc_len);
+            pos += esc_len;
+        }
+    }
+    out[pos] = '\0';
+    return 0;
+}
 
 #ifdef ESP_PLATFORM
 /*

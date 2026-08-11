@@ -9,6 +9,20 @@
 static bool s_initialized = false;
 static SemaphoreHandle_t s_tx_mutex = NULL;
 
+/* One-byte pushback so the overflow drain (H2 fix) can preserve a
+ * Ctrl+C typed while discarding an overlong line. */
+static int s_pushback = EOF;
+
+static int s_read_byte(void)
+{
+    if (s_pushback != EOF) {
+        int c = s_pushback;
+        s_pushback = EOF;
+        return c;
+    }
+    return getchar();
+}
+
 int usb_console_init(void)
 {
     if (s_initialized) {
@@ -67,7 +81,7 @@ int usb_console_read_line(char *buf, uint16_t buf_len, uint32_t timeout_ms)
 
     while (1) {
         /* Try to read one byte from stdin (non-blocking via VFS) */
-        int c = getchar();
+        int c = s_read_byte();
         if (c == EOF) {
             uint32_t elapsed = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS) - start_ms;
             if (elapsed >= timeout_ms) {
@@ -102,8 +116,33 @@ int usb_console_read_line(char *buf, uint16_t buf_len, uint32_t timeout_ms)
         if (pos < buf_len - 1) {
             buf[pos++] = (char)c;
         } else {
-            /* Buffer overflow - truncate */
+            /* Buffer overflow. H2 fix: drain the rest of the line so the
+             * tail is not re-parsed as a new command. A Ctrl+C arriving
+             * mid-drain is pushed back so the interrupt still lands.
+             * The wait budget counts CONSECUTIVE EOFs only (~200 ms of
+             * silence), so a steadily arriving tail is fully consumed.
+             * An absolute byte cap keeps a pathological EOL-less flood
+             * from wedging the CLI task. */
             buf[pos] = '\0';
+            int drained = 0;
+            for (int waits = 0; waits < 40 && drained < 8192;) {
+                int d = s_read_byte();
+                if (d == '\n' || d == '\r') {
+                    break;
+                }
+                if (d == 0x03) {
+                    s_pushback = d;
+                    break;
+                }
+                if (d == EOF) {
+                    if (++waits >= 40) {
+                        break;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                } else {
+                    drained++;
+                }
+            }
             return -504;
         }
     }

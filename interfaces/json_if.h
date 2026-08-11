@@ -40,6 +40,25 @@ int json_encode_adv(const proto_adv_report_t *report,
                     char *buf, uint16_t buf_len,
                     uint16_t *out_len);
 
+/*
+ * Escape a string for safe embedding inside a JSON string literal.
+ *
+ * Escapes '"' -> \" , '\\' -> \\ , and control chars (< 0x20) as
+ * \b \f \n \r \t or \u00XX. Output is always NUL-terminated. If the
+ * escaped result does not fit, it is truncated at a safe boundary so
+ * the output remains VALID JSON (escape sequences are never split).
+ *
+ * Needed everywhere dynamic text (Lua error messages, script results,
+ * user-supplied filter patterns) is interpolated into responses
+ * (H1 fix, bug_check 2026-08-11).
+ *
+ * @param in       Input string (null-terminated). Must not be NULL.
+ * @param[out] out Output buffer. Must not be NULL.
+ * @param out_len  Size of output buffer (>= 2).
+ * @return 0 on success, -202 on NULL parameter, -203 if out_len < 2.
+ */
+int json_escape_str(const char *in, char *out, uint16_t out_len);
+
 #ifdef __cplusplus
 }
 #endif

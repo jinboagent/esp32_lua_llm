@@ -37,7 +37,12 @@ int script_upload_begin(void);
 /*
  * Upload a chunk of script source code.
  * @param data  Chunk data (not copied — must remain valid until next call).
- * @param len   Chunk length in bytes (max 512 recommended).
+ * @param len   Chunk length in bytes. Engine-side the total script may be
+ *              up to SCRIPT_MAX_SIZE, but note the TRANSPORT limit: over
+ *              USB CDC a command line fits 255 chars (USB_RX_BUFFER_SIZE
+ *              256), so a "SCRIPT CHUNK <hex>" payload is capped at
+ *              121 bytes per chunk. Larger chunks overflow the console
+ *              line and are rejected (-504). (H3 doc fix 2026-08-11)
  */
 int script_upload_chunk(const uint8_t *data, uint16_t len);
 

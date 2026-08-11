@@ -24,6 +24,13 @@ extern int      stub_upload_end_ret;     /* 0 ok, -612 compile err, -704 storage
 extern uint32_t stub_upload_chunk_calls;
 extern uint32_t stub_uploaded_bytes;
 extern bool     stub_upload_active;
+/* Custom error text script_upload_end writes on failure ("" = default).
+ * Lets tests exercise quoted Lua error messages (H1 regression). */
+extern char     stub_upload_end_err[128];
+
+/* Lua exec stub controls (H1 regression: quoted results/error text) */
+extern int      stub_lua_exec_ret;
+extern char     stub_lua_exec_result[256];
 
 /* power stub controls */
 extern bool     stub_power_sleep_enabled;
