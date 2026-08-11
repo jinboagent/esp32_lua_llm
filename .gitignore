@@ -57,3 +57,5 @@ hw_isolate_out.txt
 hw_uptime_probe.txt
 hw_crlf_out.txt
 hw_sim_out.txt
+hw_blelua_out.txt
+soak_out.txt
