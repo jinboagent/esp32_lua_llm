@@ -35,5 +35,24 @@ if adv:
 
 print(cmd("STATUS"))          # should show scanning:true, received>0
 print(cmd("SCAN STOP"))
+
+# Ctrl+C interrupt: start a scan, then a single 0x03 byte (no Enter) must
+# stop the stream immediately
+print(cmd("SCAN START"))
+time.sleep(2)
+s.reset_input_buffer()
+s.write(b"\x03")
+time.sleep(1)
+out = s.read(65536).decode(errors="replace")
+print("[Ctrl+C] interrupt response:",
+      "PASS" if '"cmd":"interrupt"' in out else "FAIL")
+time.sleep(1)
+s.reset_input_buffer()
+time.sleep(2)
+quiet = s.read(65536).decode(errors="replace")
+adv_after = [ln for ln in quiet.splitlines() if '"addr"' in ln]
+print(f"[Ctrl+C] stream stopped: "
+      f"{'PASS' if not adv_after else 'FAIL'} ({len(adv_after)} adv after)")
+print(cmd("STATUS"))
 s.close()
 print("=== end ===")

@@ -640,12 +640,45 @@ static bool s_is_cli_command(const char *cmd)
     return false;
 }
 
+/* ---- Interrupt (Ctrl+C) ------------------------------------------------ */
+
+/* Ctrl+C from the terminal: stop whatever is streaming (upload, script,
+ * scan) so a flooded terminal can always be recovered with one key. */
+static int h_interrupt(char *response, uint16_t response_len)
+{
+    if (bridge_is_uploading()) {
+        bridge_abort();
+    }
+    if (script_is_running()) {
+        script_stop();
+    }
+    if (ble_scan_is_active()) {
+        int r1 = pipeline_stop();
+        int r2 = ble_scan_stop();
+        power_hold_activity(false);
+        if (r1 != 0 || r2 != 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"interrupt\","
+                "\"msg\":\"stop failed: %d/%d\"}", r1, r2);
+            return 0;
+        }
+    }
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"ok\",\"cmd\":\"interrupt\"}");
+    return 0;
+}
+
 int cli_process_command(const char *cmd, char *response, uint16_t response_len)
 {
     if (cmd == NULL || response == NULL || response_len == 0)
         return CLI_ERR_NULL;
 
     response[0] = '\0';
+
+    /* Ctrl+C (0x03) — immediate interrupt, takes priority over upload
+     * mode so a stuck SCRIPT LOAD can always be cancelled. */
+    if (cmd[0] == '\x03' && cmd[1] == '\0')
+        return h_interrupt(response, response_len);
 
     /* F4.2 upload mode: every line is script text except SCRIPT END.
      * Any other recognized CLI command aborts the upload and then

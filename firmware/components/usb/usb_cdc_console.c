@@ -82,6 +82,14 @@ int usb_console_read_line(char *buf, uint16_t buf_len, uint32_t timeout_ms)
             continue;
         }
 
+        if (c == 0x03) {
+            /* Ctrl+C: immediate one-byte interrupt line (no Enter
+             * needed) so a flooded terminal can always be stopped. */
+            buf[0] = '\x03';
+            buf[1] = '\0';
+            return 1;
+        }
+
         if (c == '\n' || c == '\r') {
             /* Both CR and LF terminate a line so interactive terminals
              * work (PuTTY/Tera Term send bare CR on Enter; scripts send
