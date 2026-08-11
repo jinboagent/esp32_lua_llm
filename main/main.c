@@ -22,7 +22,8 @@ void app_main(void)
     printf("Reset reason: %d\n", (int)esp_reset_reason());
     printf("Commands: STATUS, VERSION, SCAN START/STOP/INTERVAL, "
            "FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/DEINIT, "
-           "SCRIPT LOAD/BEGIN/CHUNK/END/RUN/STOP/STATUS, POWER\n\n");
+           "SCRIPT LOAD/BEGIN/CHUNK/END/RUN/STOP/STATUS, POWER\n");
+    printf("Ctrl+C: stop scan/script/upload immediately\n\n");
 
     /* Initialize USB console */
     int ret = usb_console_init();

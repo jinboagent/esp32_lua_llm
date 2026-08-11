@@ -109,6 +109,7 @@ Parse `cmd`, validate against current state, dispatch, and write JSON into
 | `SCRIPT STOP`            | `{"status":"ok","cmd":"script_stop"}`                             | `{"status":"error","cmd":"script_stop","msg":"..."}`                  |
 | `STATUS`                 | `{"status":"ok","cmd":"status","scanning":bool,"filter_count":N,"script_loaded":bool,"script_running":bool,"free_storage":N}` | — |
 | `VERSION`                | `{"status":"ok","cmd":"version","firmware":"1.0.0","build_date":"...","chip":"esp32s3"}` | — |
+| Ctrl+C (0x03, no Enter)  | `{"status":"ok","cmd":"interrupt"}` — aborts upload, stops script and scan | `{"status":"error","cmd":"interrupt","msg":"stop failed: r1/r2"}` |
 | `<invalid>`              | —                                                                 | `{"status":"error","msg":"unknown command"}`                          |
 | `<syntax error>`         | —                                                                 | `{"status":"error","msg":"invalid syntax: expected ..."}`             |
 
