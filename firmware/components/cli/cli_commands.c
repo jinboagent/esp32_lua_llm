@@ -24,6 +24,7 @@
 #include "storage_if.h"
 #include "bridge_if.h"
 #include "power_if.h"
+#include "json_if.h"
 
 #define CLI_FW_VERSION "1.0.0"
 
@@ -306,10 +307,13 @@ static int h_filter(const char *action, char *response, uint16_t response_len)
                     "%s{\"type\":\"rssi\",\"threshold\":%d}",
                     i > 0 ? "," : "", (int)r->rssi_threshold);
             } else {
+                /* H1 fix: patterns are user-supplied text */
+                char pattern_esc[FILTER_PATTERN_MAX_LEN * 2];
+                json_escape_str(r->pattern, pattern_esc, sizeof(pattern_esc));
                 ret = s_append(response, response_len, &off,
                     "%s{\"type\":\"%s\",\"pattern\":\"%s\"}",
                     i > 0 ? "," : "", s_filter_type_name(r->type),
-                    r->pattern);
+                    pattern_esc);
             }
             if (ret != 0) return ret;
         }
@@ -354,9 +358,11 @@ static int h_filter(const char *action, char *response, uint16_t response_len)
             }
             rssi_val = (int8_t)v;
         } else {
+            char type_esc[sizeof(type_str) * 2];
+            json_escape_str(type_str, type_esc, sizeof(type_esc));
             CLI_EMIT(response, response_len,
                 "{\"status\":\"error\",\"cmd\":\"filter_add\","
-                "\"msg\":\"unknown type: %s\"}", type_str);
+                "\"msg\":\"unknown type: %s\"}", type_esc);
             return 0;
         }
 
@@ -365,10 +371,13 @@ static int h_filter(const char *action, char *response, uint16_t response_len)
             ftype == FILTER_TYPE_RSSI ? NULL : value, rssi_val);
         lua_engine_unlock();
         if (ret == 0) {
+            /* H1 fix: value is user-supplied text */
+            char value_esc[FILTER_PATTERN_MAX_LEN * 2];
+            json_escape_str(value, value_esc, sizeof(value_esc));
             CLI_EMIT(response, response_len,
                 "{\"status\":\"ok\",\"cmd\":\"filter_add\","
                 "\"index\":%d,\"type\":\"%s\",\"value\":\"%s\"}",
-                (int)s_filter_engine.rule_count - 1, type_str, value);
+                (int)s_filter_engine.rule_count - 1, type_str, value_esc);
         } else {
             CLI_EMIT(response, response_len,
                 "{\"status\":\"error\",\"cmd\":\"filter_add\","
@@ -395,15 +404,22 @@ static int h_lua(const char *action, char *response, uint16_t response_len)
         }
         char lua_result[LUA_RESULT_MAX_LEN] = {0};
         int ret = lua_engine_exec(script, lua_result, sizeof(lua_result));
+        /* H1 fix: Lua results and error messages can contain quotes and
+         * control chars ('[string "..."]') — escape before embedding in
+         * the JSON response so hosts always receive valid JSON. */
+        char result_esc[LUA_RESULT_MAX_LEN * 2];
+        json_escape_str(lua_result[0] ? lua_result
+                                      : (ret == 0 ? "" : "exec failed"),
+                        result_esc, sizeof(result_esc));
         if (ret == 0) {
             CLI_EMIT(response, response_len,
                 "{\"status\":\"ok\",\"cmd\":\"lua_exec\","
-                "\"result\":\"%s\"}", lua_result);
+                "\"result\":\"%s\"}", result_esc);
         } else {
             CLI_EMIT(response, response_len,
                 "{\"status\":\"error\",\"cmd\":\"lua_exec\","
                 "\"code\":%d,\"msg\":\"%s\"}",
-                ret, lua_result[0] ? lua_result : "exec failed");
+                ret, result_esc);
         }
         return 0;
     }

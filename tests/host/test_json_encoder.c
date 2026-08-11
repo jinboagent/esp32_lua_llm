@@ -225,6 +225,54 @@ void test_json_encode_name_backslash(void)
     TEST_ASSERT_NOT_NULL(strstr(buf, "\"name\":\"path\\\\to\""));
 }
 
+/* --- TC-15..19: json_escape_str (H1 fix) --- */
+
+void test_json_escape_str_basic(void)
+{
+    char out[64];
+    TEST_ASSERT_EQUAL_INT(0, json_escape_str("a\"b\\c\nd\te", out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("a\\\"b\\\\c\\nd\\te", out);
+}
+
+void test_json_escape_str_control_chars(void)
+{
+    char out[64];
+    char in[] = {'A', 0x01, 'B', 0x1F, '\0'};
+    TEST_ASSERT_EQUAL_INT(0, json_escape_str(in, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("A\\u0001B\\u001f", out);
+}
+
+void test_json_escape_str_lua_error_shape(void)
+{
+    /* The exact shape that broke host parsing pre-H1 */
+    char out[128];
+    TEST_ASSERT_EQUAL_INT(0, json_escape_str(
+        "[string \"return +++\"]:1: unexpected symbol", out, sizeof(out)));
+    TEST_ASSERT_NOT_NULL(strstr(out, "\\\"return +++\\\""));
+}
+
+void test_json_escape_str_truncation_stays_valid(void)
+{
+    char out[8];   /* room for 7 chars + NUL */
+    /* ends with a char that needs a 2-char escape: the escape must not
+     * be split across the buffer boundary */
+    TEST_ASSERT_EQUAL_INT(0, json_escape_str("abcdef\"", out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("abcdef", out);  /* dangling escape dropped */
+
+    char out2[4];
+    TEST_ASSERT_EQUAL_INT(0, json_escape_str("a\"b", out2, sizeof(out2)));
+    TEST_ASSERT_EQUAL_STRING("a\\\"", out2);   /* escape fits exactly */
+}
+
+void test_json_escape_str_null_params(void)
+{
+    char out[8];
+    TEST_ASSERT_EQUAL_INT(-202, json_escape_str(NULL, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_INT(-202, json_escape_str("x", NULL, sizeof(out)));
+    TEST_ASSERT_EQUAL_INT(-203, json_escape_str("x", out, 1));
+    TEST_ASSERT_EQUAL_INT(-203, json_escape_str("x", out, 0));
+}
+
 int test_json_encoder_main(void);
 int test_json_encoder_main(void)
 {
@@ -243,5 +291,10 @@ int test_json_encoder_main(void)
     RUN_TEST(test_json_encode_name_newline_tab);
     RUN_TEST(test_json_encode_name_control_char);
     RUN_TEST(test_json_encode_name_backslash);
+    RUN_TEST(test_json_escape_str_basic);
+    RUN_TEST(test_json_escape_str_control_chars);
+    RUN_TEST(test_json_escape_str_lua_error_shape);
+    RUN_TEST(test_json_escape_str_truncation_stays_valid);
+    RUN_TEST(test_json_escape_str_null_params);
     return UNITY_END();
 }

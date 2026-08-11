@@ -1,9 +1,11 @@
 # Bug Tracking — BLE Sniffer Dongle
 
-> Consolidated index. **All reported bugs resolved as of 2026-08-10** (firmware v1.0.0).
+> Consolidated index. **2026-08-11**: eval found H1/H2/H3 + 4 stale test
+> scripts; all fixed and regression-covered the same day (fix report below).
+> Remaining: H4 watch item (Lua pool fragmentation — needs soak test).
 > Historical evaluation reports linked below; early reports archived in `archive/`.
 
-## Status: ALL BACKLOGS CLOSED ✅
+## Status: H1/H2/H3 RESOLVED ✅ (H4 watch item open)
 
 | Evaluation | Bugs | Outcome | Report |
 |------------|:----:|---------|--------|
@@ -14,6 +16,8 @@
 | Backlog verification (2026-08-05) | 28 re-verified | **0 genuine remainders** — tracker had gone stale; every item already closed (`1eb7d04`) | [`fix-report-2026-08-05-backlog-verification.md`](bug_fix_report/fix-report-2026-08-05-backlog-verification.md) |
 | **v1.0.0 re-eval (2026-08-05)** | **7 found** | **All closed 2026-08-10**: 6 fixed (B1 atomic script flags, B2 PM lock-failure safety, B3 `bridge_init` call, B4 allocator accounting, B6 deinit guard, B7 dedup sentinel), 1 accepted + documented (B5 stats snapshot) | [`stage-all-eval-2026-08-05.md`](stage-all-eval-2026-08-05.md), [`fix-report-2026-08-10-eval-2026-08-05.md`](bug_fix_report/fix-report-2026-08-10-eval-2026-08-05.md) |
 | **Manual BLE test (2026-08-10)** | **3 found** | N1 (`ts` always 0) fixed; N2 (scan died after 10.24 s) fixed via `BLE_HS_FOREVER` continuous discovery; N3 characterized — closing the COM port resets the chip (`ESP_RST_USB`, chip behavior; keep the port open) | [`fix-report-2026-08-10-ble-manual-test.md`](bug_fix_report/fix-report-2026-08-10-ble-manual-test.md) |
+| **BLE/Lua HW re-eval (2026-08-11)** | **3 + 1 watch** | **OPEN**: H1 invalid JSON in Lua error/result responses (live-proven, incl. SCRIPT END compile errors); H2 overlong-line tail re-parsed as command; H3 512-byte chunk guidance impossible over 255-char USB line; H4 watch: pool fragmentation (needs soak test). Stale hook scripts (T1–T4) superseded by `test_ble_lua_hw.py` (45 checks, 43 pass) + `test_ble_peer_hw.py` (11 checks, 11 pass — PC as controlled BLE peer; v1 non-connectability pinned) | [`stage-all-eval-2026-08-11.md`](stage-all-eval-2026-08-11.md) |
+| **H1/H2/H3 fixes (2026-08-11)** | **3 fixed** | **RESOLVED**: `json_escape_str()` + escaped CLI/bridge emit paths (H1); overflow drain-to-EOL with Ctrl+C pushback (H2); 121-byte chunk transport cap documented (H3). Bonus: host-suite build restored (`esp_system.h` shim — broken since N1/N2). Verified: host 76/76, BLE+Lua 45/45, peer 11/11, bridge 32/32, power 14/14 | [`fix-report-2026-08-11-eval-h1-h3.md`](bug_fix_report/fix-report-2026-08-11-eval-h1-h3.md) |
 
 ## Deferred to v2 (documented, accepted)
 
@@ -28,6 +32,25 @@
 
 1. `transform` hook signature — spec: `transform(addr, parsed_table)`; impl: `transform(addr, json_string)`. Impl kept (friendlier for LLM-generated scripts). Needs an explicit spec-vs-code decision.
 2. `lua_engine_deinit` vs concurrent lock waiters — the race window is now closed in practice: the CLI refuses `LUA DEINIT` while scanning or a script runs (`-911`, B6 fix 2026-08-10). A full refcount-based fix remains a v2 candidate.
+
+## Verification state (2026-08-11, firmware v1.0.0 + N1/N2 + H1/H2/H3)
+
+- host suite: **76/76** (was unbuildable since N1/N2 — `esp_system.h` shim restored it; +9 escape regression tests)
+- `test_ble_lua_hw.py`: **45/45** (H1/H2 tracker checks now green)
+- `test_ble_peer_hw.py`: **11/11** (capture threshold tuned: ≥2 exact-field lines / 8 s, WinRT adv interval is fixed)
+- `test_bridge_hw.py`: **32/32** · `test_power_hw.py`: **14/14**
+- Open: H4 soak test (needs `free_heap`/Lua-pool metrics in STATUS first)
+
+## Verification state (2026-08-11, firmware unchanged v1.0.0 + N1/N2)
+
+- `test_ble_lua_hw.py` (NEW): **43/45** on COM12 — the 2 fails track open
+  findings H1/H2
+- `test_ble_peer_hw.py` (NEW): **11/11** on COM12 — PC as controlled BLE
+  peer (WinRT advertiser); dongle not discoverable (v1 boundary)
+- Hook data plane proven on target: 7-arg ABI, suppress-all = 0 lines,
+  transform rewrite = 100 % marker, SCRIPT STOP restores stream
+- `test_hooks.py` / `test_hooks2.py` / `test_script.py` / `test_bugfixes.py`:
+  **superseded — do not trust** (T1–T4, see 2026-08-11 eval)
 
 ## Verification state (2026-08-10, firmware v1.0.0 + N1/N2 fixes)
 

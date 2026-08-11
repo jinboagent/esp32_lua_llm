@@ -16,6 +16,7 @@
 #include "bridge_if.h"
 #include "script_if.h"
 #include "lua_if.h"
+#include "json_if.h"
 
 /* ---- Upload State ---- */
 
@@ -242,8 +243,12 @@ int bridge_upload_finish(char *response, uint16_t response_len)
     const char *msg = (ret == -612)
         ? (err_buf[0] ? err_buf : "compile error")
         : (ret == -704 ? "storage write failed" : "upload end failed");
+    /* H1 fix: Lua compile errors contain quotes ('[string "..."]') —
+     * escape so the host always receives valid JSON. */
+    char msg_esc[sizeof(err_buf) * 2];
+    json_escape_str(msg, msg_esc, sizeof(msg_esc));
     snprintf(response, response_len,
         "{\"status\":\"error\",\"cmd\":\"script_end\","
-        "\"code\":%d,\"msg\":\"%s\"}", ret, msg);
+        "\"code\":%d,\"msg\":\"%s\"}", ret, msg_esc);
     return ret;
 }

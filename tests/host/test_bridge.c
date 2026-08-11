@@ -124,6 +124,22 @@ static void test_bridge_compile_error(void)
     stub_upload_end_ret = 0;
 }
 
+static void test_bridge_compile_error_escaped(void)
+{
+    /* H1 regression: Lua compile errors contain quotes ('[string "..."]');
+     * the script_end response must stay valid JSON. */
+    stub_upload_end_ret = -612;
+    snprintf(stub_upload_end_err, sizeof(stub_upload_end_err),
+             "[string \"bad(\"]:1: unexpected symbol");
+    TEST_ASSERT_EQUAL_INT(0, bridge_upload_begin(resp, RESP_LEN));
+    TEST_ASSERT_EQUAL_INT(0,
+        bridge_handle_script_upload("bad(", 4, resp, RESP_LEN));
+    TEST_ASSERT_EQUAL_INT(-612, bridge_upload_finish(resp, RESP_LEN));
+    TEST_ASSERT_TRUE(strstr(resp, "\"code\":-612") != NULL);
+    TEST_ASSERT_NOT_NULL(strstr(resp, "[string \\\"bad(\\\"]"));
+    stub_upload_end_ret = 0;
+}
+
 /* ---- End-to-end through the CLI dispatcher ---- */
 
 static void test_cli_text_upload_flow(void)
@@ -210,6 +226,7 @@ int test_bridge_main(void)
     stub_reset_all(); RUN_TEST(test_bridge_empty_script);
     stub_reset_all(); RUN_TEST(test_bridge_oversize);
     stub_reset_all(); RUN_TEST(test_bridge_compile_error);
+    stub_reset_all(); RUN_TEST(test_bridge_compile_error_escaped);
     stub_reset_all(); RUN_TEST(test_cli_text_upload_flow);
     stub_reset_all(); RUN_TEST(test_cli_upload_interrupted_by_command);
     stub_reset_all(); RUN_TEST(test_hex_path_unaffected);

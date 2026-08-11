@@ -23,6 +23,10 @@ int      stub_upload_end_ret;
 uint32_t stub_upload_chunk_calls;
 uint32_t stub_uploaded_bytes;
 bool     stub_upload_active;
+char     stub_upload_end_err[128];
+
+int      stub_lua_exec_ret;
+char     stub_lua_exec_result[256];
 
 bool     stub_power_sleep_enabled;
 
@@ -40,6 +44,9 @@ void stub_reset_all(void)
     stub_upload_chunk_calls = 0;
     stub_uploaded_bytes = 0;
     stub_upload_active = false;
+    stub_upload_end_err[0] = '\0';
+    stub_lua_exec_ret = 0;
+    snprintf(stub_lua_exec_result, sizeof(stub_lua_exec_result), "ok");
     stub_power_sleep_enabled = true;
 }
 
@@ -79,8 +86,8 @@ int  lua_engine_deinit(void)     { return 0; }
 int  lua_engine_exec(const char *script, char *result, uint16_t result_len)
 {
     (void)script;
-    snprintf(result, result_len, "ok");
-    return 0;
+    snprintf(result, result_len, "%s", stub_lua_exec_result);
+    return stub_lua_exec_ret;
 }
 
 /* ---- Script management ---- */
@@ -110,7 +117,11 @@ int  script_upload_end(char *err_buf, uint16_t err_len)
     if (stub_upload_end_ret == 0) {
         stub_script_loaded = true;
     } else if (err_buf != NULL && err_len > 0) {
-        snprintf(err_buf, err_len, "stub compile error");
+        if (stub_upload_end_err[0] != '\0') {
+            snprintf(err_buf, err_len, "%s", stub_upload_end_err);
+        } else {
+            snprintf(err_buf, err_len, "stub compile error");
+        }
     }
     return stub_upload_end_ret;
 }

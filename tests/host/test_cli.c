@@ -263,6 +263,41 @@ static void test_power_commands(void)
     TEST_ASSERT_TRUE(strstr(resp, "invalid syntax") != NULL);
 }
 
+/* ---- LUA EXEC response escaping (H1 regression) -------------------------- */
+
+static void test_lua_exec_result_escaped(void)
+{
+    snprintf(stub_lua_exec_result, sizeof(stub_lua_exec_result),
+             "a\"b\\c\nd");
+    TEST_ASSERT_EQUAL_INT(0,
+        cli_process_command("LUA EXEC return x", resp, RESP_LEN));
+    TEST_ASSERT_TRUE(strstr(resp, "\"status\":\"ok\"") != NULL);
+    /* result must be embedded escaped: a\"b\\c\nd */
+    TEST_ASSERT_NOT_NULL(strstr(resp, "\"result\":\"a\\\"b\\\\c\\nd\""));
+}
+
+static void test_lua_exec_error_escaped(void)
+{
+    stub_lua_exec_ret = -612;
+    snprintf(stub_lua_exec_result, sizeof(stub_lua_exec_result),
+             "[string \"return +++\"]:1: unexpected symbol near '+'");
+    TEST_ASSERT_EQUAL_INT(0,
+        cli_process_command("LUA EXEC return +++", resp, RESP_LEN));
+    TEST_ASSERT_TRUE(strstr(resp, "\"code\":-612") != NULL);
+    /* quotes from the Lua message must be escaped (pre-H1 they were raw,
+     * producing unparseable JSON) */
+    TEST_ASSERT_NOT_NULL(strstr(resp, "[string \\\"return +++\\\"]"));
+}
+
+static void test_filter_value_echo_escaped(void)
+{
+    /* user-supplied filter text must round-trip escaped */
+    TEST_ASSERT_EQUAL_INT(0,
+        cli_process_command("FILTER ADD NAME ab\"cd", resp, RESP_LEN));
+    TEST_ASSERT_TRUE(strstr(resp, "\"status\":\"ok\"") != NULL);
+    TEST_ASSERT_NOT_NULL(strstr(resp, "ab\\\"cd"));
+}
+
 /* ---- Entry point --------------------------------------------------------- */
 
 int test_cli_main(void)
@@ -286,6 +321,9 @@ int test_cli_main(void)
     reset_stubs(); cli_init(); RUN_TEST(test_syntax_errors);
     reset_stubs(); cli_init(); RUN_TEST(test_script_chunk_hex_validation);
     reset_stubs(); cli_init(); RUN_TEST(test_power_commands);
+    reset_stubs(); cli_init(); RUN_TEST(test_lua_exec_result_escaped);
+    reset_stubs(); cli_init(); RUN_TEST(test_lua_exec_error_escaped);
+    reset_stubs(); cli_init(); RUN_TEST(test_filter_value_echo_escaped);
 
     return UNITY_END();
 }
