@@ -41,7 +41,23 @@ STATUS stays within the 512-byte TX buffer (≈ +70 bytes).
   `test_ble_lua_hw.py` **45/45** (strict JSON parser accepts the extended STATUS)
 - Flashed and hash-verified on COM12
 
-## Soak status
+## Soak status — CLOSED: no fragmentation in practice
 
-Launched 2026-08-11 (2 h, `soak_test.py 2`). Verdict to be appended here
-and reported in `status/LATEST.md` when the run completes.
+Completed 2026-08-12 (2 h, 24 samples, scan + fragmenting transform):
+
+| Criterion | Result |
+|-----------|--------|
+| reset_reason constant | PASS ([11] only — the pre-run USB reset) |
+| lua_used creep (early vs late avg) | PASS: 20846 → 21738 (+892 B; oscillation 13.3–29.1 KB, troughs flat, final sample the lowest of the run) |
+| free_heap drift | PASS: 115660/115660 |
+| adv flow (no stall) | PASS: 35–55 adv per 5 s window, all 24 windows |
+| queue_drops | PASS: 0/0 |
+
+The first run's "FAIL (growth)" line was a criterion bug: max−min flags
+normal allocation oscillation. Fragmentation would show as *rising
+troughs/creep*; none observed. soak_test.py now uses the early/late-average
+criterion.
+
+Follow-up included here: `lua_peak` is now a true high-water mark updated
+inside `s_pool_alloc` (previously sampled only at hook-call boundaries, so
+it under-reported — the soak showed peak < used).
