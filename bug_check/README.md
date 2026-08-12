@@ -2,10 +2,10 @@
 
 > Consolidated index. **2026-08-11**: eval found H1/H2/H3 + 4 stale test
 > scripts; all fixed and regression-covered the same day (fix report below).
-> Remaining: H4 watch item (Lua pool fragmentation — needs soak test).
+> Remaining: none — H4 soak completed 2026-08-12, no fragmentation observed.
 > Historical evaluation reports linked below; early reports archived in `archive/`.
 
-## Status: H1/H2/H3 RESOLVED ✅ (H4 soak in progress)
+## Status: ALL EVAL FINDINGS RESOLVED ✅ (H4 closed 2026-08-12)
 
 | Evaluation | Bugs | Outcome | Report |
 |------------|:----:|---------|--------|
@@ -39,7 +39,7 @@
 - `test_ble_lua_hw.py`: **45/45** (H1/H2 tracker checks now green)
 - `test_ble_peer_hw.py`: **11/11** (capture threshold tuned: ≥2 exact-field lines / 8 s, WinRT adv interval is fixed)
 - `test_bridge_hw.py`: **32/32** · `test_power_hw.py`: **14/14**
-- Open: H4 soak test (needs `free_heap`/Lua-pool metrics in STATUS first)
+- H4 soak: **closed 2026-08-12** — 2 h, 24 samples, no creep (early/late avg 20846/21738), no stalls, no resets; `lua_peak` now a true high-water mark
 
 ## Verification state (2026-08-11, firmware unchanged v1.0.0 + N1/N2)
 
