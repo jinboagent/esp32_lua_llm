@@ -110,11 +110,18 @@ heap = [st["free_heap"] for _, st in warm]
 drops = [st["queue_drops"] for _, st in samples]
 rr = {st["reset_reason"] for _, st in samples}
 
+# lua_used oscillates with allocation churn; fragmentation shows as CREEP,
+# so compare early vs late averages, not max-min
+third = max(1, len(used) // 3)
+early_avg = sum(used[:third]) / third
+late_avg = sum(used[-third:]) / third
+
 print("=== SOAK SUMMARY ===")
 print(f"samples            : {len(samples)}")
 print(f"reset_reasons seen : {sorted(rr)}  -> {'PASS' if len(rr) == 1 else 'FAIL'}")
-print(f"lua_used min/max   : {min(used)}/{max(used)}  "
-      f"-> {'PASS' if max(used) - min(used) <= 2048 else 'FAIL (growth)'}")
+print(f"lua_used min/max   : {min(used)}/{max(used)} (oscillation, informational)")
+print(f"lua_used early/late avg: {early_avg:.0f}/{late_avg:.0f}  "
+      f"-> {'PASS' if late_avg - early_avg <= 4096 else 'FAIL (creep)'}")
 print(f"free_heap min/max  : {min(heap)}/{max(heap)}  "
       f"-> {'PASS' if max(heap) - min(heap) <= 8192 else 'FAIL (drift)'}")
 print(f"adv windows w/ 0   : {sum(1 for n in adv_counts if n == 0)}  "

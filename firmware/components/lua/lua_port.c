@@ -23,6 +23,7 @@ static uint8_t s_lua_heap[LUA_MEMORY_LIMIT] __attribute__((aligned(4)));
 static size_t s_heap_top = 0;     /* bump pointer for new allocations */
 static uint16_t s_free_head = 0;  /* head of free list (0 = empty) */
 static size_t s_pool_used = 0;
+static size_t s_peak_used = 0;  /* true high-water mark, updated on every alloc */
 
 static inline uint16_t offset_of(void *ptr) {
     return (uint16_t)((uint8_t *)ptr - s_lua_heap);
@@ -30,6 +31,13 @@ static inline uint16_t offset_of(void *ptr) {
 
 static inline pool_block_t *block_at(uint16_t off) {
     return (pool_block_t *)(s_lua_heap + off);
+}
+
+static inline void s_pool_track_peak(void)
+{
+    if (s_pool_used > s_peak_used) {
+        s_peak_used = s_pool_used;
+    }
 }
 
 static void *s_pool_alloc(size_t size)
@@ -52,6 +60,7 @@ static void *s_pool_alloc(size_t size)
                 block_at(prev)->next = next;
             }
             s_pool_used += blk->size + POOL_HDR;
+            s_pool_track_peak();
             return (void *)(s_lua_heap + cur + POOL_HDR);
         }
         prev = cur;
@@ -70,6 +79,7 @@ static void *s_pool_alloc(size_t size)
     blk->next = 0;
     s_heap_top += needed;
     s_pool_used += needed;
+    s_pool_track_peak();
     return (void *)(s_lua_heap + off + POOL_HDR);
 }
 
@@ -243,7 +253,6 @@ static void s_setup_sandbox(lua_State *L)
 static lua_State *s_lua_state = NULL;
 static lua_alloc_ctx_t s_alloc_ctx = {0};
 static bool s_initialized = false;
-static size_t s_peak_used = 0;
 
 /* ---- Public API ---- */
 
@@ -372,11 +381,6 @@ int lua_engine_exec(const char *script, char *result, uint16_t result_len)
     /* Execute */
     status = lua_pcall(s_lua_state, 0, 1, 0);
     lua_sethook(s_lua_state, NULL, 0, 0);
-
-    /* Track peak usage */
-    if (s_pool_used > s_peak_used) {
-        s_peak_used = s_pool_used;
-    }
 
     if (status != LUA_OK) {
         const char *err = lua_tostring(s_lua_state, -1);
