@@ -24,8 +24,8 @@ extern "C" {
  *   -614     Execution timeout (instruction limit exceeded)
  */
 
-/* Memory limit for Lua allocator (128KB with PSRAM, 32KB without) */
-#define LUA_MEMORY_LIMIT       (128 * 1024)
+/* Memory limit for Lua allocator — lives with the pool (lua_pool_if.h) */
+#include "lua_pool_if.h"
 
 /* Maximum result buffer size from lua_engine_exec */
 #define LUA_RESULT_MAX_LEN     256

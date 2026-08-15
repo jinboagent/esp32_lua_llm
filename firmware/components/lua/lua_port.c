@@ -8,168 +8,48 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-/* ---- Static Pool Allocator (B-S3-1 fix) ---- */
-
-/* Block header: 4 bytes overhead per allocation */
-typedef struct {
-    uint16_t size;    /* usable size (excluding header) */
-    uint16_t next;    /* offset to next free block, 0 = allocated or end */
-} pool_block_t;
-
-#define POOL_HDR  sizeof(pool_block_t)
-#define POOL_ALIGN 4
-
-static uint8_t s_lua_heap[LUA_MEMORY_LIMIT] __attribute__((aligned(4)));
-static size_t s_heap_top = 0;     /* bump pointer for new allocations */
-static uint16_t s_free_head = 0;  /* head of free list (0 = empty) */
-static size_t s_pool_used = 0;
-static size_t s_peak_used = 0;  /* true high-water mark, updated on every alloc */
-
-static inline uint16_t offset_of(void *ptr) {
-    return (uint16_t)((uint8_t *)ptr - s_lua_heap);
-}
-
-static inline pool_block_t *block_at(uint16_t off) {
-    return (pool_block_t *)(s_lua_heap + off);
-}
-
-static inline void s_pool_track_peak(void)
-{
-    if (s_pool_used > s_peak_used) {
-        s_peak_used = s_pool_used;
-    }
-}
-
-static void *s_pool_alloc(size_t size)
-{
-    /* Align size */
-    size = (size + POOL_ALIGN - 1) & ~(POOL_ALIGN - 1);
-    if (size == 0) size = POOL_ALIGN;
-
-    /* Try free list first (first-fit) */
-    uint16_t prev = 0;
-    uint16_t cur = s_free_head;
-    while (cur != 0) {
-        pool_block_t *blk = block_at(cur);
-        if (blk->size >= size) {
-            /* Use this block */
-            uint16_t next = blk->next;
-            if (prev == 0) {
-                s_free_head = next;
-            } else {
-                block_at(prev)->next = next;
-            }
-            s_pool_used += blk->size + POOL_HDR;
-            s_pool_track_peak();
-            return (void *)(s_lua_heap + cur + POOL_HDR);
-        }
-        prev = cur;
-        cur = blk->next;
-    }
-
-    /* Bump allocate from top */
-    size_t needed = size + POOL_HDR;
-    if (s_heap_top + needed > LUA_MEMORY_LIMIT) {
-        return NULL; /* OOM */
-    }
-
-    uint16_t off = (uint16_t)s_heap_top;
-    pool_block_t *blk = block_at(off);
-    blk->size = (uint16_t)size;
-    blk->next = 0;
-    s_heap_top += needed;
-    s_pool_used += needed;
-    s_pool_track_peak();
-    return (void *)(s_lua_heap + off + POOL_HDR);
-}
-
-static void s_pool_free(void *ptr)
-{
-    if (ptr == NULL) return;
-    if ((uint8_t *)ptr < s_lua_heap || (uint8_t *)ptr >= s_lua_heap + s_heap_top) return;
-
-    uint16_t off = offset_of((uint8_t *)ptr - POOL_HDR);
-    pool_block_t *blk = block_at(off);
-    s_pool_used -= (blk->size + POOL_HDR);
-
-    /* Add to free list (sorted by offset for future coalescing) */
-    blk->next = s_free_head;
-    s_free_head = off;
-}
-
-static void *s_pool_realloc(void *ptr, size_t new_size)
-{
-    if (ptr == NULL) return s_pool_alloc(new_size);
-    if (new_size == 0) { s_pool_free(ptr); return NULL; }
-
-    uint16_t off = offset_of((uint8_t *)ptr - POOL_HDR);
-    pool_block_t *blk = block_at(off);
-    size_t old_size = blk->size;
-
-    if (new_size <= old_size) {
-        return ptr; /* shrink in place (no split for simplicity) */
-    }
-
-    void *new_ptr = s_pool_alloc(new_size);
-    if (new_ptr == NULL) return NULL;
-    memcpy(new_ptr, ptr, old_size);
-    s_pool_free(ptr);
-    return new_ptr;
-}
+/* ---- Static Pool Allocator ----
+ * Moved to lua_pool.c (interfaces/lua_pool_if.h) in the 2026-08-16
+ * evaluation response: 32-bit offsets, on-free coalescing, single ledger.
+ */
 
 /* ---- Lua Allocator Callback ---- */
 
 typedef struct {
-    size_t used;
-    size_t limit;
+    size_t limit;   /* soft byte limit; the pool owns the only ledger */
 } lua_alloc_ctx_t;
 
 static void *s_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 {
     lua_alloc_ctx_t *ctx = (lua_alloc_ctx_t *)ud;
+    (void)osize;
 
     if (nsize == 0) {
-        /* Estimate freed size from pool header */
-        if (ptr != NULL) {
-            uint16_t off = offset_of((uint8_t *)ptr - POOL_HDR);
-            pool_block_t *blk = block_at(off);
-            ctx->used -= (blk->size + POOL_HDR);
-        }
-        s_pool_free(ptr);
+        lua_pool_free(ptr);
         return NULL;
     }
 
-    /* B4 fix: guard against the aligned size — what the pool actually
-     * charges — not the raw request size. Checking the unaligned size
-     * while accounting the aligned size made ctx->used drift past the
-     * soft limit over many alloc/free cycles. */
-    size_t asize = (nsize + POOL_ALIGN - 1) & ~(POOL_ALIGN - 1);
+    /* Guard against the aligned size — what the pool actually charges
+     * (B4 fix, preserved). */
+    size_t asize = (nsize + 3) & ~(size_t)3;
     if (asize == 0) {
-        asize = POOL_ALIGN;
+        asize = 4;
     }
+    size_t hdr = lua_pool_header_size();
 
     if (ptr == NULL) {
-        if (ctx->used + asize + POOL_HDR > ctx->limit) {
+        if (lua_pool_used() + asize + hdr > ctx->limit) {
             return NULL;
         }
-        void *p = s_pool_alloc(nsize);
-        if (p) {
-            pool_block_t *blk = block_at(offset_of((uint8_t *)p - POOL_HDR));
-            ctx->used += blk->size + POOL_HDR;
-        }
-        return p;
+        return lua_pool_alloc(nsize);
     }
 
-    /* Resize */
-    if (ctx->used + asize > ctx->limit + osize) {
+    /* Resize: projected usage after swapping the old block for the new */
+    size_t old_charge = lua_pool_charge(ptr);
+    if (lua_pool_used() - old_charge + asize + hdr > ctx->limit) {
         return NULL;
     }
-    void *p = s_pool_realloc(ptr, nsize);
-    if (p) {
-        /* Recalculate used from pool */
-        ctx->used = s_pool_used;
-    }
-    return p;
+    return lua_pool_realloc(ptr, nsize);
 }
 
 /* ---- Mutex (B-S3-4 fix) ---- */
@@ -269,12 +149,8 @@ int lua_engine_init(void)
     }
 
     /* Reset pool */
-    s_heap_top = 0;
-    s_free_head = 0;
-    s_pool_used = 0;
-    s_peak_used = 0;
+    lua_pool_init();
 
-    s_alloc_ctx.used = 0;
     s_alloc_ctx.limit = LUA_MEMORY_LIMIT;
 
     s_lua_state = lua_newstate(s_lua_alloc, &s_alloc_ctx);
@@ -306,9 +182,9 @@ int lua_engine_deinit(void)
         s_lua_state = NULL;
     }
 
-    printf("Lua: engine destroyed (peak: %u bytes)\n", (unsigned)s_peak_used);
+    printf("Lua: engine destroyed (peak: %u bytes)\n",
+           (unsigned)lua_pool_peak());
 
-    s_alloc_ctx.used = 0;
     s_initialized = false;
 
     lua_engine_unlock();
@@ -436,12 +312,12 @@ bool lua_engine_is_ready(void)
 
 void lua_engine_pool_stats(uint32_t *used, uint32_t *peak)
 {
-    /* H4 observability: read-only snapshot of the static pool accounting */
+    /* H4 observability: read-only snapshot of the pool's single ledger */
     if (used != NULL) {
-        *used = (uint32_t)s_pool_used;
+        *used = (uint32_t)lua_pool_used();
     }
     if (peak != NULL) {
-        *peak = (uint32_t)s_peak_used;
+        *peak = (uint32_t)lua_pool_peak();
     }
 }
 

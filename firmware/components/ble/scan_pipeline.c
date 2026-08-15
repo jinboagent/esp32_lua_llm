@@ -63,11 +63,12 @@ static void s_pipeline_task_func(void *param)
         parsed.rssi = raw.rssi;
         parsed.ts_ms = raw.ts_ms;  /* N1 fix: propagate reception timestamp */
 
-        /* 3. Filter (locked to prevent concurrent CLI modification, B-S3-6 fix) */
+        /* 3. Filter — the filter engine owns its own lock now
+         * (2026-08-16 eval response; was lua_engine_lock coupling) */
         if (s_filter_engine != NULL) {
-            lua_engine_lock();
+            filter_lock();
             bool pass = filter_evaluate(s_filter_engine, &parsed);
-            lua_engine_unlock();
+            filter_unlock();
             if (!pass) {
                 s_stats.total_filtered++;
                 continue;
@@ -75,8 +76,10 @@ static void s_pipeline_task_func(void *param)
         }
 
         /* 3b. Lua on_adv hook — spec signature:
-         * on_adv(addr, addr_type, rssi, name, uuids, manu_id, manu_data) (M-S3-9 fix) */
-        if (script_is_running() && lua_engine_has_func("on_adv") == 1) {
+         * on_adv(addr, addr_type, rssi, name, uuids, manu_id, manu_data) (M-S3-9 fix).
+         * Hook presence is cached at SCRIPT RUN/STOP instead of locking
+         * the Lua engine twice per advertisement. */
+        if (script_is_running() && script_has_on_adv()) {
             int hook_ret = lua_engine_call_on_adv("on_adv", &parsed);
             if (hook_ret == 0) {
                 /* Script suppressed this advertisement */
@@ -93,8 +96,8 @@ static void s_pipeline_task_func(void *param)
             continue;
         }
 
-        /* 4b. Lua transform hook */
-        if (script_is_running() && lua_engine_has_func("transform") == 1) {
+        /* 4b. Lua transform hook (presence cached, see 3b) */
+        if (script_is_running() && script_has_transform()) {
             s_format_addr(parsed.addr, addr_str, sizeof(addr_str));
             char transform_buf[JSON_LINE_MAX_LEN];
             int hook_ret = lua_engine_call_transform("transform", addr_str,

@@ -294,9 +294,9 @@ static int h_filter(const char *action, char *response, uint16_t response_len)
         if (st != CLI_STATE_IDLE)
             return s_state_error(response, response_len, "filter_clear",
                                  "stop scanning/script first");
-        lua_engine_lock();  /* B-S3-6 fix: protect filter from pipeline */
+        filter_lock();  /* filter engine owns its concurrency now */
         filter_clear(&s_filter_engine);
-        lua_engine_unlock();
+        filter_unlock();
         CLI_EMIT(response, response_len,
             "{\"status\":\"ok\",\"cmd\":\"filter_clear\"}");
         return 0;
@@ -375,10 +375,10 @@ static int h_filter(const char *action, char *response, uint16_t response_len)
             return 0;
         }
 
-        lua_engine_lock();  /* B-S3-6 fix */
+        filter_lock();
         int ret = filter_add_rule(&s_filter_engine, ftype,
             ftype == FILTER_TYPE_RSSI ? NULL : value, rssi_val);
-        lua_engine_unlock();
+        filter_unlock();
         if (ret == 0) {
             /* H1 fix: value is user-supplied text */
             char value_esc[FILTER_PATTERN_MAX_LEN * 2];

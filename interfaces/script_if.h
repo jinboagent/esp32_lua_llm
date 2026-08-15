@@ -79,6 +79,11 @@ bool script_is_loaded(void);
 /* Returns true if hooks are actively being called. */
 bool script_is_running(void);
 
+/* Hook-presence cache (refreshed at SCRIPT RUN/STOP) so the pipeline can
+ * skip Lua lock round-trips per advertisement. */
+bool script_has_on_adv(void);
+bool script_has_transform(void);
+
 #ifdef __cplusplus
 }
 #endif
