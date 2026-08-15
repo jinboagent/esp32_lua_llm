@@ -10,6 +10,7 @@ extern int test_json_encoder_main(void);
 extern int test_filter_engine_main(void);
 extern int test_cli_main(void);
 extern int test_bridge_main(void);
+extern int test_lua_pool_main(void);
 
 int main(void)
 {
@@ -19,5 +20,6 @@ int main(void)
     failures += test_filter_engine_main();
     failures += test_cli_main();
     failures += test_bridge_main();
+    failures += test_lua_pool_main();
     return failures;
 }

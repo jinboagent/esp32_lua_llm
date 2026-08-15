@@ -103,6 +103,14 @@ bool filter_evaluate(const filter_engine_t *eng,
  */
 int filter_get_count(const filter_engine_t *eng);
 
+/*
+ * Concurrency: the engine instance is shared between the CLI (mutation)
+ * and the pipeline (evaluation). Callers bracket critical sections with
+ * these. No-op in host builds (HOST_BUILD).
+ */
+void filter_lock(void);
+void filter_unlock(void);
+
 #ifdef __cplusplus
 }
 #endif

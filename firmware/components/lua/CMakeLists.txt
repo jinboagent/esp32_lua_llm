@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "lua_port.c"
+        "lua_pool.c"
         "script_mgmt.c"
         "src/lapi.c"
         "src/lauxlib.c"

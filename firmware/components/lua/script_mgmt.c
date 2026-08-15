@@ -23,6 +23,11 @@ static script_upload_ctx_t s_upload = {0};
  * class as the already-atomic s_running/s_scanning flags. */
 static atomic_bool s_script_loaded = false;
 static atomic_bool s_script_running = false;
+/* Hook-presence cache, refreshed at RUN/STOP so the pipeline can check
+ * without locking the Lua engine per advertisement
+ * (2026-08-16 eval response). */
+static atomic_bool s_has_on_adv = false;
+static atomic_bool s_has_transform = false;
 /* L-S3-5 fix: s_upload.buffer doubles as a cache of the last saved script,
  * so script_run() doesn't re-read LittleFS on every call. Invalidated as
  * soon as a new upload starts touching the buffer. */
@@ -174,6 +179,8 @@ int script_run(void)
     }
 
     atomic_store(&s_script_running, true);  /* B1 fix: atomic (read by pipeline task) */
+    atomic_store(&s_has_on_adv, lua_engine_has_func("on_adv") == 1);
+    atomic_store(&s_has_transform, lua_engine_has_func("transform") == 1);
     printf("Script: running\n");
     return 0;
 }
@@ -191,6 +198,8 @@ int script_stop(void)
     atomic_store(&s_script_running, false);  /* B1 fix */
     lua_engine_clear_func("on_adv");
     lua_engine_clear_func("transform");
+    atomic_store(&s_has_on_adv, false);
+    atomic_store(&s_has_transform, false);
 
     printf("Script: stopped\n");
     return 0;
@@ -204,4 +213,14 @@ bool script_is_loaded(void)
 bool script_is_running(void)
 {
     return atomic_load(&s_script_running);
+}
+
+bool script_has_on_adv(void)
+{
+    return atomic_load(&s_has_on_adv);
+}
+
+bool script_has_transform(void)
+{
+    return atomic_load(&s_has_transform);
 }

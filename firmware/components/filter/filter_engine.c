@@ -2,12 +2,42 @@
 #include <string.h>
 #include <ctype.h>
 
+#ifdef HOST_BUILD
+/* Host unit tests are single-threaded */
+void filter_lock(void)   { }
+void filter_unlock(void) { }
+#else
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+static SemaphoreHandle_t s_filter_mutex = NULL;
+
+void filter_lock(void)
+{
+    if (s_filter_mutex != NULL) {
+        xSemaphoreTake(s_filter_mutex, portMAX_DELAY);
+    }
+}
+
+void filter_unlock(void)
+{
+    if (s_filter_mutex != NULL) {
+        xSemaphoreGive(s_filter_mutex);
+    }
+}
+#endif
+
 int filter_init(filter_engine_t *eng)
 {
     if (eng == NULL) {
         return -302;
     }
     memset(eng, 0, sizeof(filter_engine_t));
+#ifndef HOST_BUILD
+    if (s_filter_mutex == NULL) {
+        /* created once at boot, before the pipeline task exists */
+        s_filter_mutex = xSemaphoreCreateMutex();
+    }
+#endif
     return 0;
 }
 
