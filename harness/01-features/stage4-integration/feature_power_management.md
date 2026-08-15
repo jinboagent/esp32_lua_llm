@@ -9,7 +9,7 @@
 | Layer        | Integration                            |
 | Dependencies | F2.3 (scan_pipeline)                   |
 | Source Files | `interfaces/power_if.h`, `firmware/components/power/power_mgmt.c` |
-| Test Files   | `tests/harness/test_power_on_target.c` |
+| Test Files   | `tests/host/ (Unity host suite) + root Python HIL suites (see README Test strategy)` |
 
 ## Functional Description
 
@@ -161,12 +161,12 @@ the PMIC sensor or a calibrated lookup table based on active peripherals.
 
 ```bash
 # Host-side unit test (mocked dependencies)
-cd tests/harness
+cd <project root>
 cmake -B build -S . && cmake --build build
 ./build/test_power_on_target
 
 # On-target test via ESP-IDF
-idf.py -C tests/harness build flash monitor
+python test_bridge_hw.py / test_power_hw.py / test_ble_lua_hw.py (HIL)
 ```
 
 ## Implementation Notes (v1.0.0, 2026-08-04)

@@ -72,7 +72,12 @@ connections/GATT are v2.
   leaking a re-parsed tail; every dynamic string in responses is JSON-escaped
 - **Lua sandbox**: whitelist only (base/string/table/math/utf8, `string.dump` removed);
   uploads additionally scanned for `os.`/`io.`/`debug.`/`require`/etc. → reject `-612`
-- **Concurrency**: `lua_State` mutex, dedup table spinlock, atomic scan state — all race findings from evaluations are fixed and regression-covered
+- **Concurrency**: `lua_State` mutex, dedup table spinlock, atomic scan state — all race findings from evaluations are fixed and regression-covered.
+  The filter engine owns its own mutex and hook presence is cached at
+  SCRIPT RUN/STOP, so the hot path takes no Lua-engine locks (2026-08-16)
+- **Lua pool allocator**: extracted `lua_pool.c` — 32-bit offsets, on-free
+  coalescing, top-block shrink, single ledger; host-tested incl. a >64 KB
+  offset regression (2026-08-16 eval response)
 - **Observability**: STATUS reports `reset_reason` (11 = USB reset on port
   close), `free_heap`, `lua_pool{used,peak}`, queue drops and pipeline counters
 - **Power**: tickless light sleep when idle, wake-on-USB-command; a NO_LIGHT_SLEEP
@@ -124,6 +129,26 @@ python test_ble_peer_hw.py COM12     :: controlled BLE peer, needs bleak+winrt (
 ```
 
 Note: after changing `sdkconfig.defaults`, delete `sdkconfig` and `build/` for a clean rebuild.
+
+### Build workflow: the tmux `esp32` pane
+
+Builds/flashes run in a dedicated tmux pane (WSL tmux, session `esp32`) so
+long output streams in its own window instead of flooding the console/agent
+context. `dev_env.bat` creates the pane idempotently and is wired to run
+automatically at Qwen Code session start (`.qwen/settings.json`
+SessionStart hook; run `dev_env.bat` by hand otherwise).
+
+```bat
+:: send a build into the pane with a sentinel, then poll for the sentinel
+wsl -d Ubuntu tmux send-keys -t esp32:0.0 "cmd.exe /c \"build.bat > build_check.txt 2>&1 && echo BUILD_OK || echo BUILD_FAILED\"; echo SENTINEL" Enter
+:: watch it live:  wsl -d Ubuntu tmux attach -t esp32   (detach: Ctrl-b d)
+```
+
+Read results from the log file tail (`build_check.txt`), never by dumping
+the whole log into the conversation. Gotcha: never launch the WindowsApps
+`pwsh.exe` shim from WSL interop — it kills the WSL instance and takes the
+tmux server down (the pane defaults to bash for this reason; the real
+PowerShell 7 binary is used when present).
 
 ## Test strategy
 

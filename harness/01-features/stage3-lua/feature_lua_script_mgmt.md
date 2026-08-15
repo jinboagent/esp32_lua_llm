@@ -7,7 +7,7 @@
 | **Layer** | Lua |
 | **Dependencies** | F3.1 (Lua port), F0.1 (USB CDC), F0.2 (LittleFS storage) |
 | **Source Files** | `interfaces/script_if.h`, `firmware/components/lua/script_mgmt.c` |
-| **Test File** | `tests/harness/test_script_mgmt_on_target.c` |
+| **Test File** | `tests/host/ (Unity host suite) + root Python HIL suites (see README Test strategy)` |
 
 ---
 
@@ -225,3 +225,7 @@ Called after `on_adv` returns `true`. Allows the script to customize the JSON ou
 - Should multiple scripts be supported (script slots), or is a single active script sufficient?
 - Should the upload protocol include a checksum (e.g., CRC32) for integrity verification?
 - Should `transform` hook errors disable only that hook while keeping `on_adv` active, or disable the entire script?
+
+## Implementation Notes (v1.0.0, 2026-08-16)
+- `transform(addr, json_string)` - second param is the JSON string, not the spec's parsed table. Deliberate: friendlier for LLM-generated scripts. Documented divergence (bug_check/README.md).
+- `on_adv` matches the spec's 7-arg signature.

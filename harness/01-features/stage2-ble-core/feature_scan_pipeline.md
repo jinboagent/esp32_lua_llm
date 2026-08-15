@@ -7,7 +7,7 @@
 | **Layer** | BLE Core |
 | **Dependencies** | F1.1 (USB CDC), F1.2 (AD data parser), F1.3 (filter engine), F2.2 (BLE passive scan) |
 | **Source Files** | `interfaces/pipeline_if.h`, `firmware/components/pipeline/scan_pipeline.c` |
-| **Test File** | `tests/harness/test_pipeline_on_target.c` |
+| **Test File** | `tests/host/ (Unity host suite) + root Python HIL suites (see README Test strategy)` |
 
 ---
 
@@ -181,3 +181,10 @@ while (running) {
 - Should the pipeline support a transform stage (Lua callback) in Stage 2, or is that deferred to Stage 3?
 - Should `pipeline_stop` block until the task is fully suspended, or return immediately?
 - What is the maximum JSON line length? Should oversized lines be truncated or dropped?
+
+## Implementation Notes (v1.0.0, 2026-08-16)
+- API renamed `pipeline_set_filter()` (spec: `pipeline_set_filter_engine`).
+- Lua hooks implemented although the spec marked them "future".
+- AC-8 queue flush satisfied via ble_scan start/stop, not pipeline_stop.
+- No core pinning (see feature_nimble_init.md notes).
+- Filter evaluation uses the filter engine's own lock; hook presence cached at SCRIPT RUN/STOP (2026-08-16 lock decoupling).

@@ -118,6 +118,17 @@ BLE radio → NimBLE scan callback → copy raw ADV → FreeRTOS queue
 
 ## Library Reuse Policy (MANDATORY)
 
+> **2026-08-16 annotation:** the "Redesign Required" list below was
+> **evaluated and rejected** for v1.0.0; it is retained for history only.
+> Rationale (full arguments in `docs/evaluation-response-2026-08-16.md`):
+> the pipeline is deliberately allocation-free — cJSON allocates per node;
+> `ble_hs_adv_parse_fields()` heap-allocates and copies fields; `esp_console`
+> is a human-interactive console (prompts, history, argtable heap churn)
+> while this product's CLI is a machine protocol (prompt-free single-line
+> JSON, state guards, multi-line upload). Reuse WAS applied where it fits:
+> NimBLE (radio), LittleFS, `esp_pm`, USB-Serial/JTAG console, Unity.
+> The policy's evaluation rule (check first, document rejection) stands.
+
 Before designing ANY new module, the following ESP-IDF built-in components
 MUST be evaluated for reuse. Only write custom code if:
 1. The component does not exist in ESP-IDF or a well-known OSS project

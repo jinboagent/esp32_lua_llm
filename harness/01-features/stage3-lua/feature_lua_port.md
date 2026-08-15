@@ -7,7 +7,7 @@
 | **Layer** | Lua |
 | **Dependencies** | F0.2 (LittleFS storage) |
 | **Source Files** | `interfaces/lua_if.h`, `firmware/components/lua/lua_port.c` |
-| **Test File** | `tests/harness/test_lua_on_target.c` |
+| **Test File** | `tests/host/ (Unity host suite) + root Python HIL suites (see README Test strategy)` |
 
 ---
 
@@ -172,3 +172,10 @@ After `luaL_openlibs(L)`, the following is performed:
 - Should the instruction-count threshold for the 10 ms timeout be calibrated at runtime or set at compile time?
 - Should `lua_engine_exec` support returning structured data (tables) or only string/number results?
 - Is 32 KB sufficient for useful filter/transform scripts, or should the no-PSRAM limit be increased?
+
+## Implementation Notes (v1.0.0, 2026-08-16)
+- API renamed `lua_engine_is_ready()` (spec: `lua_engine_is_running`).
+- Whitelist loading is stronger than the spec's openlibs-then-remove.
+- Pool fixed at 128 KB; CPU cap is a fixed instruction budget, not calibrated ms.
+- Pool allocator rewritten 2026-08-16 (lua_pool.c: uint32 offsets, on-free coalescing, single ledger) per docs/evaluation-response-2026-08-16.md.
+- Upload token scan is fail-closed (rejects tokens even in comments/strings) - UX cost by design; the library whitelist is the security boundary.

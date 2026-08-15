@@ -7,7 +7,7 @@
 | **Layer** | BLE Core |
 | **Dependencies** | None |
 | **Source Files** | `interfaces/ble_if.h`, `firmware/components/ble/ble_nimble_init.c` |
-| **Test File** | `tests/harness/test_nimble_on_target.c` |
+| **Test File** | `tests/host/ (Unity host suite) + root Python HIL suites (see README Test strategy)` |
 
 ---
 
@@ -119,3 +119,7 @@ CONFIG_BT_NIMBLE_MEM_POOL_SIZE=70
 ## 9. Open Questions
 
 - None at this time.
+
+## Implementation Notes (v1.0.0, 2026-08-16)
+- `ROLE_BROADCASTER` not enabled - observer-only sdkconfig is leaner than the spec's role list (deviation now documented).
+- NimBLE host task is NOT pinned to core 1 - the spec's core-separation claim is not enforced; task priorities decouple the work. See docs/evaluation-response-2026-08-16.md.
