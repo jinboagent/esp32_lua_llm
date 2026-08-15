@@ -18,7 +18,7 @@ Initialize and manage USB CDC serial port for command/response communication. Bu
 ## Test Files
 
 - **Host tests:** `tests/host/test_usb_cdc.c` (host-testable parts)
-- **Target tests:** `tests/harness/test_usb_on_target.c`
+- **Target tests:** `tests/host/ (Unity host suite) + root Python HIL suites (see README Test strategy)`
 
 ## Description
 

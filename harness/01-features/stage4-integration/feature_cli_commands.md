@@ -9,7 +9,7 @@
 | Layer        | Integration                                |
 | Dependencies | F2.3 (scan_pipeline), F3.2 (lua_script_mgmt) |
 | Source Files | `interfaces/cli_if.h`, `firmware/components/cli/cli_commands.c` |
-| Test Files   | `tests/harness/test_cli_on_target.c`       |
+| Test Files   | `tests/host/ (Unity host suite) + root Python HIL suites (see README Test strategy)`       |
 
 ## Functional Description
 
@@ -169,10 +169,10 @@ Parse `cmd`, validate against current state, dispatch, and write JSON into
 
 ```bash
 # Host-side unit test (mocked dependencies)
-cd tests/harness
+cd <project root>
 cmake -B build -S . && cmake --build build
 ./build/test_cli_on_target
 
 # On-target test via ESP-IDF
-idf.py -C tests/harness build flash monitor
+python test_bridge_hw.py / test_power_hw.py / test_ble_lua_hw.py (HIL)
 ```

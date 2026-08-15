@@ -7,7 +7,7 @@
 | **Layer** | BLE Core |
 | **Dependencies** | F2.1 (NimBLE Stack Initialization) |
 | **Source Files** | `interfaces/ble_if.h`, `firmware/components/ble/ble_scan.c` |
-| **Test File** | `tests/harness/test_ble_scan_on_target.c` |
+| **Test File** | `tests/host/ (Unity host suite) + root Python HIL suites (see README Test strategy)` |
 
 ---
 
@@ -151,3 +151,7 @@ typedef struct {
 
 - Should the dedup window be runtime-configurable (via Lua script) or compile-time only?
 - Should scan filter policies (e.g., only accept connectable) be exposed in the API?
+
+## Implementation Notes (v1.0.0, 2026-08-16)
+- Dedup table holds 128 entries (spec: 64) - superset.
+- Queue overflow drops and counts the NEWEST report (spec said drop-oldest) - never blocks the radio; loss observable via `queue_drops`.

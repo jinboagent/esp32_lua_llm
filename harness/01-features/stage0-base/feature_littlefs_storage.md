@@ -17,7 +17,7 @@ Mount and manage LittleFS filesystem for storing Lua scripts and configuration f
 
 ## Test Files
 
-- **Target tests:** `tests/harness/test_littlefs_on_target.c`
+- **Target tests:** `tests/host/ (Unity host suite) + root Python HIL suites (see README Test strategy)`
 
 ## Description
 
