@@ -150,6 +150,19 @@ the whole log into the conversation. Gotcha: never launch the WindowsApps
 tmux server down (the pane defaults to bash for this reason; the real
 PowerShell 7 binary is used when present).
 
+### Commit message standard (enforced)
+
+Every commit needs a `type(scope): summary` subject plus four filled
+sections: `## What Changed`, `## Why (Decision/Rationale)`,
+`## How (Process)`, `## Verification`. The `commit-msg` hook in
+`.githooks/` rejects anything less — enable it once per clone:
+
+```bat
+git config core.hooksPath .githooks
+```
+
+Genuine exceptions bypass with `git commit --no-verify`.
+
 ## Test strategy
 
 Four layers; everything hardware-facing runs against the real dongle on
