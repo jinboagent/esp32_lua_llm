@@ -1,16 +1,17 @@
 # LATEST — Status Pointer
 
-**Current status:** [`status-2026-08-16-0428.md`](status-2026-08-16-0428.md)
+**Current status:** [`status-2026-08-16-1125.md`](status-2026-08-16-1125.md)
 
 ## At a glance
 
-- **Live LLM loop verified**: `llm_loop.py` ran end-to-end against DashScope
-  `glm-5.2` — model-generated Lua deployed on first try, stream 68 → 10
-  adv/6 s; example script saved at `docs/example_llm_generated.lua`
-- **`.llm_env` fallback**: gitignored credential file next to `llm_loop.py`
-  (real env vars win) — terminal env never reaches other shells on Windows
-- **Product loop fully closed**: scan → JSON → LLM → Lua → deploy → clean
-  stream, one command: `python llm_loop.py COM12 loop`
+- **BLE connection (GATT client) proposal written — awaiting review**:
+  `docs/feature-proposal-ble-conn-2026-08-16.md` on branch `ble_connected`.
+  Requirement + decisions, seam analysis, options A/B/C, impact table,
+  test plan, open questions. No code changed; harness promotion deferred
+  until review sign-off
+- **Earlier today**: host LLM loop shipped + live-verified with glm-5.2
+  (`llm_loop.py`, `.llm_env`, `docs/example_llm_generated.lua`)
 - **Firmware unchanged** — v1.0.0 + pool rewrite + lock decoupling, host
   **86/86**, all HW suites green
-- **Next:** push (2 commits ahead); optional 2 h re-soak; v2 candidates
+- **Next:** review the proposal → promote to harness F2.4 → implement;
+  optional 2 h re-soak when the port is free
