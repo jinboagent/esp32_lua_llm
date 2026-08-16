@@ -170,10 +170,11 @@ COM12 (one program owns the port at a time).
 
 | Layer | Tool | Covers | Checks |
 |-------|------|--------|:------:|
-| Host unit | Unity + MinGW, `tests/host` (stubs for ble/lua/storage/power) | AD parser, JSON encoder + escaping, filter logic, CLI state machine, bridge protocol | 76 |
+| Host unit | Unity + MinGW, `tests/host` (stubs for ble/lua/storage/power) | AD parser, JSON encoder + escaping, filter logic, CLI state machine, bridge protocol, pool allocator | 86 |
 | HW command plane | `test_bridge_hw.py`, `test_power_hw.py` | CLI/bridge/state guards/sandbox on device, PM behavior | 32 + 14 |
 | HW data plane | `test_ble_lua_hw.py` (ambient RF), `test_ble_peer_hw.py` (PC advertises via WinRT as a controlled peer) | JSON schema / ts monotonicity / dedup invariants, 7-arg hook ABI, suppression + transform on the live stream, v1 non-connectability | 45 + 11 |
 | Interactive & soak | `putty_sim_test.py`, `cr_lf_test.py`, `capture_25s.py`, `soak_test.py` | terminal contract (CR/LF/Ctrl+C), continuous-scan windows, 2 h pool-fragmentation soak with `free_heap`/`lua_pool` sampling | — |
+| LLM loop (host) | `llm_loop.py` | the product loop end-to-end: capture → LLM-generated Lua → deploy → verify; `--dry-run` exercises the mechanics with no API key | — |
 
 Principles (each learned from a real miss):
 
@@ -182,6 +183,29 @@ Principles (each learned from a real miss):
 - **Ambient RF is nondeterministic** — exact-field verification needs the controlled PC peer.
 - **FreeRTOS/NimBLE behavior isn't host-stubbable** — the data plane is hardware-in-the-loop only.
 - **Suites only see the first seconds after SCAN START** — long-window and soak tools exist to cover windowing/fragmentation bugs.
+
+## Host tooling: `llm_loop.py` (the LLM loop)
+
+Closes the product loop on the PC side (spec:
+`harness/01-features/stage5-host/feature_llm_loop_tool.md`): capture live
+advertisement JSON → an LLM writes a Lua filter/transform for exactly that
+environment → deploy over the `SCRIPT LOAD` bridge → verify the cleaned
+stream.
+
+```bash
+python llm_loop.py COM12 loop --secs 8 --goal "keep only my Sensor_* devices"
+```
+
+Subcommands: `capture` (JSONL file), `analyze` (writes the Lua to a file so
+you can review it before deploying), `deploy` (upload + run + verify),
+`loop` (all of the above in one run). `--dry-run` exercises the full
+mechanical loop with a bundled sample script — no API key, no network.
+
+The LLM backend is any OpenAI-compatible endpoint, configured by env vars:
+`LLM_BASE_URL` (default `https://api.openai.com/v1`), `LLM_API_KEY` (falls
+back to `OPENAI_API_KEY`), `LLM_MODEL` (default `gpt-4o-mini`). DeepSeek,
+OpenRouter and local Ollama all work unchanged. The sample sent to the model
+is capped at 30 deduplicated advertisement lines to bound token cost.
 
 ## Usage quick reference
 

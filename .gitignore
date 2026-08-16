@@ -59,3 +59,7 @@ hw_crlf_out.txt
 hw_sim_out.txt
 hw_blelua_out.txt
 soak_out.txt
+
+# llm_loop.py run artifacts
+adv_capture.jsonl
+llm_script.lua
