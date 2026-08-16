@@ -204,8 +204,11 @@ mechanical loop with a bundled sample script — no API key, no network.
 The LLM backend is any OpenAI-compatible endpoint, configured by env vars:
 `LLM_BASE_URL` (default `https://api.openai.com/v1`), `LLM_API_KEY` (falls
 back to `OPENAI_API_KEY`), `LLM_MODEL` (default `gpt-4o-mini`). DeepSeek,
-OpenRouter and local Ollama all work unchanged. The sample sent to the model
-is capped at 30 deduplicated advertisement lines to bound token cost.
+OpenRouter and local Ollama all work unchanged. The same three variables can
+instead live in a gitignored `.llm_env` file next to the script (real env
+vars win) — useful when your terminal's env doesn't reach other shells. The
+sample sent to the model is capped at 30 deduplicated advertisement lines to
+bound token cost.
 
 ## Usage quick reference
 

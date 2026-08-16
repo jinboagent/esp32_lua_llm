@@ -63,3 +63,6 @@ soak_out.txt
 # llm_loop.py run artifacts
 adv_capture.jsonl
 llm_script.lua
+
+# LLM credentials (local only, never commit)
+.llm_env

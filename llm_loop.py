@@ -18,6 +18,9 @@ LLM backend (OpenAI-compatible chat completions, urllib only):
   LLM_API_KEY   bearer token (falls back to OPENAI_API_KEY; Ollama accepts
                 any value)
   LLM_MODEL     default gpt-4o-mini
+  The same three variables can instead live in a gitignored `.llm_env`
+  file next to this script (KEY=value lines); real env vars take
+  precedence.
 
 The port stays OPEN for the whole run — closing it resets the chip
 (N3, bug_check 2026-08-10). The tool leaves the device idle before exit
@@ -181,12 +184,31 @@ def strip_fences(text):
     return text.strip()
 
 
+def load_env_file():
+    """Optional .llm_env next to this script; real env vars take precedence."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".llm_env")
+    env = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                env[k.strip()] = v.strip().strip('"')
+    return env
+
+
 def llm_generate(samples, goal):
-    base = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
-    model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+    file_env = load_env_file()
+    base = (os.environ.get("LLM_BASE_URL")
+            or file_env.get("LLM_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
+    key = (os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+           or file_env.get("LLM_API_KEY", ""))
+    model = os.environ.get("LLM_MODEL") or file_env.get("LLM_MODEL", "gpt-4o-mini")
     if not key:
-        sys.exit("error: no LLM_API_KEY (or OPENAI_API_KEY) in the environment.\n"
+        sys.exit("error: no LLM_API_KEY (or OPENAI_API_KEY) in the environment\n"
+                 "       or in .llm_env next to this script.\n"
                  "       Set LLM_BASE_URL/LLM_API_KEY/LLM_MODEL for your provider,\n"
                  "       or pass --dry-run to use the bundled sample script.")
     user = ("Goal: " + goal + "\n\nSample advertisements from the live "

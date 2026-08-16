@@ -46,6 +46,9 @@ One OpenAI-compatible chat-completions client (urllib, no SDK):
 `--dry-run` skips the LLM and deploys a bundled sample script so the whole
 mechanical loop is testable with no key/network.
 
+The same three variables may instead live in a gitignored `.llm_env` file
+next to `llm_loop.py` (KEY=value lines); real env vars take precedence.
+
 ### System prompt contract (embedded)
 
 Teaches the model the exact device ABI so generated scripts compile first try:
