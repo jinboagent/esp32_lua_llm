@@ -1,17 +1,20 @@
 # LATEST — Status Pointer
 
-**Current status:** [`status-2026-08-16-1125.md`](status-2026-08-16-1125.md)
+**Current status:** [`status-2026-08-22-0059.md`](status-2026-08-22-0059.md)
 
 ## At a glance
 
-- **BLE connection (GATT client) proposal written — awaiting review**:
-  `docs/feature-proposal-ble-conn-2026-08-16.md` on branch `ble_connected`.
-  Requirement + decisions, seam analysis, options A/B/C, impact table,
-  test plan, open questions. No code changed; harness promotion deferred
-  until review sign-off
-- **Earlier today**: host LLM loop shipped + live-verified with glm-5.2
-  (`llm_loop.py`, `.llm_env`, `docs/example_llm_generated.lua`)
-- **Firmware unchanged** — v1.0.0 + pool rewrite + lock decoupling, host
-  **86/86**, all HW suites green
-- **Next:** review the proposal → promote to harness F2.4 → implement;
-  optional 2 h re-soak when the port is free
+- **F2.4 implemented + verified** on `ble_connected`: optional BLE
+  connection (GATT client) — connect by service UUID or address, notify
+  or poll a characteristic, re-stream as `"src":"conn"` JSON lines;
+  build flag `CONFIG_BLE_CONN_ENABLED` + runtime CONN commands
+- **Review amendments absorbed** (zai A1–A6, deepseek D1–D7): CLI state
+  matrix, queue+emitter, addr-type learn, 128-bit tap parse, MTU/trunc,
+  own mutex, power observability, envelope-wins precedence
+- **Verified**: host 95/95; off-build excludes conn; HIL C0 14/14 on
+  device; regressions 32/14/45/11 green; GATT data path = manual nRF
+  Connect runbook on this PC (WinRT server APIs unavailable)
+- **Also in this branch**: architecture-pattern guide
+  (`harness/00-global-context/architecture_patterns.md`), both review
+  docs, proposal data-flow update
+- **Next:** push when permitted; manual runbook; optional re-soak

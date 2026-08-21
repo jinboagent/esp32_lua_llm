@@ -42,12 +42,18 @@ analysis loop.
      JSON encode (all dynamic text escaped) -> [Lua transform hook]
         v
      USB console TX (mutex-serialized lines)
+
+   [optional, F2.4, CONFIG_BLE_CONN_ENABLED] NimBLE central:
+     CONN TARGET <svc-uuid> / CONN START [addr] -> GATT notify or poll
+        -> conn payload queue (drop-newest) -> JSON conn lines
+        -> same USB stream, tagged "src":"conn"
 ```
 
 Product loop (the reason the device exists): scan JSON → host LLM analyzes
 → LLM writes a Lua filter/transform → `SCRIPT LOAD` deploys it (sandboxed)
-→ device streams only what matters. v1 is scan-only by design; BLE
-connections/GATT are v2.
+→ device streams only what matters. v1 shipped scan-only; the optional
+central role (connect out, read a peer's GATT JSON) arrived as F2.4 — the
+device still never advertises or accepts connections.
 
 ### Firmware modules (`firmware/components/`, public APIs in `interfaces/`)
 
@@ -55,12 +61,12 @@ connections/GATT are v2.
 |--------|-----------|------|
 | USB console | `usb` | USB-Serial/JTAG line I/O (IDF console, non-blocking read) |
 | Storage | `storage` | LittleFS file store for Lua scripts |
-| BLE | `ble` | NimBLE init, passive scan + FNV-1a dedup, pipeline task |
+| BLE | `ble` | NimBLE init, passive scan + FNV-1a dedup, pipeline task; optional GATT client (`ble_conn.c`, F2.4) |
 | Protocol | `proto`, `json_enc`, `filter` | AD parsing, JSON encoding, C filter rules |
 | Lua | `lua` | Lua 5.4 on a static pool allocator, whitelist sandbox, hooks; script upload/run/stop |
 | CLI | `cli` | Command parser + IDLE/SCANNING/SCRIPT_RUNNING state machine |
 | Bridge | `bridge` | Text-line script upload with per-line sandbox scan |
-| Power | `power` | Automatic light sleep when idle, PM activity lock while scanning |
+| Power | `power` | Automatic light sleep when idle, PM activity lock while scanning or connected |
 
 ### Design highlights
 
@@ -170,9 +176,10 @@ COM12 (one program owns the port at a time).
 
 | Layer | Tool | Covers | Checks |
 |-------|------|--------|:------:|
-| Host unit | Unity + MinGW, `tests/host` (stubs for ble/lua/storage/power) | AD parser, JSON encoder + escaping, filter logic, CLI state machine, bridge protocol, pool allocator | 86 |
+| Host unit | Unity + MinGW, `tests/host` (stubs for ble/lua/storage/power) | AD parser, JSON encoder + escaping (incl. F2.4 conn-line precedence/truncation), filter logic, CLI state machine, bridge protocol, pool allocator | 95 |
 | HW command plane | `test_bridge_hw.py`, `test_power_hw.py` | CLI/bridge/state guards/sandbox on device, PM behavior | 32 + 14 |
 | HW data plane | `test_ble_lua_hw.py` (ambient RF), `test_ble_peer_hw.py` (PC advertises via WinRT as a controlled peer) | JSON schema / ts monotonicity / dedup invariants, 7-arg hook ABI, suppression + transform on the live stream, v1 non-connectability | 45 + 11 |
+| HW connection (F2.4) | `test_ble_conn_hw.py` | CONN control plane without a peer (C0: validation, tap/own-disc search paths, -450/-453); auto/direct connect + notify re-stream when a WinRT GATT server is available, else manual nRF Connect runbook | 17 |
 | Interactive & soak | `putty_sim_test.py`, `cr_lf_test.py`, `capture_25s.py`, `soak_test.py` | terminal contract (CR/LF/Ctrl+C), continuous-scan windows, 2 h pool-fragmentation soak with `free_heap`/`lua_pool` sampling | — |
 | LLM loop (host) | `llm_loop.py` | the product loop end-to-end: capture → LLM-generated Lua → deploy → verify; `--dry-run` exercises the mechanics with no API key | — |
 
@@ -227,7 +234,10 @@ Connect to the USB-Serial/JTAG console (COM12 @ 115200). Commands:
 | `SCRIPT RUN` / `SCRIPT STOP` / `SCRIPT STATUS` | control the loaded script |
 | `POWER SLEEP ON/OFF`, `POWER STATUS` | light-sleep policy and estimates |
 | `LUA INIT/EXEC/DEINIT` | engine control |
-| `Ctrl+C` | interrupt: abort upload, stop script and scan immediately (no Enter needed) |
+| `CONN TARGET <svc-uuid> [<char-uuid>]` | F2.4: set GATT target UUIDs (16/32/128-bit) |
+| `CONN START [<addr> [public\|random]]` | F2.4: connect (auto by service UUID when no addr) |
+| `CONN STOP` / `CONN STATUS` / `CONN INTERVAL <ms>` | F2.4: disconnect / inspect / poll fallback interval |
+| `Ctrl+C` | interrupt: abort upload, stop script and scan, drop any connection (no Enter needed) |
 
 Example output line:
 
@@ -252,6 +262,7 @@ end
 |------|-------|
 | Product spec & design | `harness/00-global-context/project_overview.md` (historical plan: `docs/archive/qwen_featuer.md`) |
 | Coding rules / error codes | `harness/00-global-context/coding_rules.md` |
+| Architecture patterns & feature-patch guide | `harness/00-global-context/architecture_patterns.md` |
 | Per-feature specs + acceptance criteria | `harness/01-features/` |
 | Current project status | `status/LATEST.md` |
 | Bug history & deferred items | `bug_check/README.md` |

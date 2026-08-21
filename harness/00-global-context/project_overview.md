@@ -30,12 +30,19 @@ On-device Lua 5.4 scripting enables custom filter and transform logic. A PC-side
 +---------------------+          +------------------------------------------+
 ```
 
+Pattern map, conflict-resistance rationale, and the feature-patch
+checklist: `architecture_patterns.md` (same directory).
+
 ## Data Flow
 
 ```
 BLE radio → NimBLE scan callback → copy raw ADV → FreeRTOS queue
   → AD structure parser → filter engine (C rules + optional Lua)
   → JSON encoder → USB CDC TX buffer → host
+
+(optional, F2.4) BLE radio → NimBLE central connect → GATT notify/read
+  → conn payload queue (drop-newest) → JSON conn encoder
+  → USB CDC TX buffer → host   (same stream, "src":"conn" lines)
 ```
 
 ## LLM Loop
@@ -75,9 +82,12 @@ BLE radio → NimBLE scan callback → copy raw ADV → FreeRTOS queue
 - LittleFS for script and config persistence
 - Pipeline orchestration (scan → parse → filter → encode → output)
 
+**v2 increments (optional builds):**
+- BLE connection (GATT client), `CONFIG_BLE_CONN_ENABLED` — F2.4
+
 **Out of scope for v1:**
 - Active scanning (scan request / scan response)
-- BLE connections (GATT client/server)
+- BLE connections as a *required* capability (shipped optional in F2.4; GATT server still out of scope)
 - WiFi of any kind
 - BLE mesh
 - BLE direction finding / AoA

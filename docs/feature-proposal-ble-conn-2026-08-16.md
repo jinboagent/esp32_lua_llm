@@ -101,6 +101,60 @@ up for free):
 `STATUS` gains a nested `"conn":{enabled,connected,addr,mode}` object
 (additive; existing host consumers ignore unknown fields).
 
+### 2.6 Data Flow (as-is vs proposed)
+
+**As-is (v1.0.0) — adv path only** (mirrors `project_overview.md` §Data Flow):
+
+```
+BLE radio → NimBLE scan callback → raw ADV → FreeRTOS queue
+  → AD parser → filter engine (C rules + optional Lua on_adv/transform)
+  → json_encode_adv → usb_console_send_json → USB CDC → host
+```
+
+**Proposed — conn path added; the adv path above is byte-for-byte
+unchanged:**
+
+```
+                    CONTROL PLANE (existing CLI + new family)
+          CONN TARGET/START/STOP/STATUS/INTERVAL, Ctrl+C
+                               │
+                               v
+ +----------+  connect   +-----------+  GATT disc   +------------+
+ |  BLE     |===========>| ble_conn  |=============>| svc + char |
+ |  radio   |<===========| (central) |<=============| discovery  |
+ +----------+  notify /  +-----------+  read        +------------+
+              poll payload      │
+          (adv path still       │
+           flows in parallel)   v
+                     json_encode_conn
+                  (merge JSON object,
+                   else wrap "data")
+                                │
+                                v
+                    usb_console_send_json   ← SAME stream as adv lines
+                                │
+                                v
+                      USB CDC → host (llm_loop / LLM see both kinds)
+```
+
+**Auto-connect peer search** (NimBLE runs one discovery at a time):
+
+```
+scan active? ──yes──> ble_scan raw-report tap ─> match svc UUID ─┐
+      │                                                          ├─> ble_gap_connect
+      └──no───> ble_conn own ble_gap_disc ─────> match svc UUID ─┘
+```
+
+**Side channels:**
+
+- `power_hold_conn(true)` on connect / `false` on disconnect, OR-ed with
+  the scan hold so neither releases the other's light-sleep block.
+- Disconnect events (peer vanish, `CONN STOP`, Ctrl+C) return the state
+  machine to IDLE and emit a `{"status":"ok","cmd":"conn_stop"…}` /
+  disconnect notice line.
+- Deliberately **not** in the flow: Lua hooks (decision §2.3) and
+  pipeline stats (stay adv-only; conn counters live in `CONN STATUS`).
+
 ## 3. As-Is Seam Analysis (what the v1 design did / didn't anticipate)
 
 ### Anticipated — the feature plugs into existing contracts
@@ -228,7 +282,10 @@ redraw a boundary only when the feature proves the boundary wrong.*
 1. Reviewer sign-off (or amendments) on this document.
 2. Promote to `harness/01-features/stage2-ble-core/feature_ble_conn.md`
    (F2.4); remove from `harness/02-future/README.md` candidate table.
-3. Implement per §5 order: spec → headers → impl → host tests → HIL →
+3. Mirror §2.6 into `project_overview.md` (Architecture box diagram +
+   Data Flow section gain the conn path) — project docs update only
+   after review, per the review-first agreement.
+4. Implement per §5 order: spec → headers → impl → host tests → HIL →
    docs, on branch `ble_connected`.
-4. Status report + LATEST pointer; commit with the repo's 4-section
+5. Status report + LATEST pointer; commit with the repo's 4-section
    commit-message standard.
