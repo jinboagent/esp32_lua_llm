@@ -58,6 +58,8 @@ hw_uptime_probe.txt
 hw_crlf_out.txt
 hw_sim_out.txt
 hw_blelua_out.txt
+hw_peer_out.txt
+build_off_check.txt
 soak_out.txt
 
 # llm_loop.py run artifacts
