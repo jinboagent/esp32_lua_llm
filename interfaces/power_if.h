@@ -88,6 +88,16 @@ int power_get_config(power_config_t *config);
  */
 void power_hold_activity(bool hold);
 
+/*
+ * Hold/release the same no-light-sleep lock for an active BLE
+ * connection (F2.4). OR-ed with power_hold_activity: the lock stays
+ * acquired while EITHER holder is active, so stopping one stream never
+ * releases the other's block. Wired in main.c via the ble_conn event
+ * callback (the power component must not depend on ble). Safe to call
+ * when PM is compiled out.
+ */
+void power_hold_conn(bool hold);
+
 #ifdef __cplusplus
 }
 #endif

@@ -13,6 +13,19 @@
 #include "bridge_if.h"
 #include "power_if.h"
 
+/* F2.4: the power component must not depend on ble, so the conn hold is
+ * wired here via the event callback instead of inside ble_conn. */
+#ifdef CONFIG_BLE_CONN_ENABLED
+static void s_conn_power_cb(int event)
+{
+    if (event == BLE_CONN_EVT_CONNECTED) {
+        power_hold_conn(true);
+    } else if (event == BLE_CONN_EVT_DISCONNECTED) {
+        power_hold_conn(false);
+    }
+}
+#endif
+
 void app_main(void)
 {
     printf("\n=== BLE Sniffer Dongle v1.0.0 ===\n");
@@ -22,7 +35,11 @@ void app_main(void)
     printf("Reset reason: %d\n", (int)esp_reset_reason());
     printf("Commands: STATUS, VERSION, SCAN START/STOP/INTERVAL, "
            "FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/DEINIT, "
-           "SCRIPT LOAD/BEGIN/CHUNK/END/RUN/STOP/STATUS, POWER\n");
+           "SCRIPT LOAD/BEGIN/CHUNK/END/RUN/STOP/STATUS, POWER"
+#ifdef CONFIG_BLE_CONN_ENABLED
+           ", CONN TARGET/START/STOP/STATUS/INTERVAL"
+#endif
+           "\n");
     printf("Ctrl+C: stop scan/script/upload immediately\n\n");
 
     /* Initialize USB console */
@@ -53,6 +70,16 @@ void app_main(void)
     if (ret != 0) {
         printf("WARNING: BLE init failed (%d)\n", ret);
     }
+
+#ifdef CONFIG_BLE_CONN_ENABLED
+    /* F2.4: optional central role (explicit boot-chain seam, review A6) */
+    ret = ble_conn_init();
+    if (ret != 0) {
+        printf("WARNING: BLE conn init failed (%d)\n", ret);
+    } else {
+        ble_conn_set_event_cb(s_conn_power_cb);
+    }
+#endif
 
     /* Initialize pipeline (suspended, waiting for SCAN START) */
     ret = pipeline_init();

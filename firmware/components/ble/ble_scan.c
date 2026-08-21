@@ -18,6 +18,7 @@ typedef struct {
 static QueueHandle_t s_scan_queue = NULL;
 static atomic_bool s_scanning = false;  /* B-S2-2 fix: atomic access */
 static atomic_uint s_queue_drop_count = 0;  /* M-S2-4 fix: observability */
+static void (*s_tap)(const adv_report_raw_t *) = NULL;  /* F2.4 */
 
 /* Protects s_dedup against concurrent access from the NimBLE host task
  * (GAP event handler) and the CLI task (memset in ble_scan_start) — B-S2-3
@@ -140,12 +141,8 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISC: {
         struct ble_gap_disc_desc *disc = &event->disc;
 
-        /* Dedup check */
-        if (s_dedup_check(disc->addr.val)) {
-            return 0; /* skip duplicate */
-        }
-
-        /* Build raw report */
+        /* Build the raw report first: the F2.4 tap sees every report,
+         * including ones dedup drops (peer search needs raw visibility). */
         adv_report_raw_t report;
         memcpy(report.addr, disc->addr.val, 6);
         report.addr_type = disc->addr.type;
@@ -160,6 +157,17 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
         }
         report.adv_data_len = data_len;
         memcpy(report.adv_data, disc->data, data_len);
+
+        /* F2.4 raw-report tap (no-op when unset); runs in the NimBLE
+         * host task — the callback must stay fast. */
+        if (s_tap != NULL) {
+            s_tap(&report);
+        }
+
+        /* Dedup check */
+        if (s_dedup_check(disc->addr.val)) {
+            return 0; /* skip duplicate */
+        }
 
         /* Non-blocking enqueue — drop if queue full (counted, M-S2-4 fix) */
         if (xQueueSend(s_scan_queue, &report, 0) != pdTRUE) {
@@ -284,6 +292,11 @@ int ble_scan_set_params(uint32_t interval_ms, uint32_t window_ms)
     s_interval_ms = interval_ms;
     s_window_ms = window_ms;
     return 0;
+}
+
+void ble_scan_set_tap(void (*cb)(const adv_report_raw_t *))
+{
+    s_tap = cb;  /* F2.4: single writer at boot (ble_conn_init) */
 }
 
 int ble_scan_get_report(adv_report_raw_t *out, uint32_t timeout_ms)

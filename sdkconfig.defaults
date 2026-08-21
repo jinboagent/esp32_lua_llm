@@ -41,6 +41,14 @@ CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_DEFAULT=y
 
+# BLE connection feature (F2.4): CONFIG_BLE_CONN_ENABLED selects the
+# central role via Kconfig.projbuild; one connection by design (was the
+# IDF default of 3 - deliberate, saves connection-object RAM).
+# NOTE: keep this file ASCII-only; kconfgen reads it with the locale
+# codec (GBK on zh-CN Windows) and chokes on UTF-8 punctuation.
+CONFIG_BLE_CONN_ENABLED=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+
 # Disable WiFi to save RAM (~20KB)
 CONFIG_ESP_WIFI_ENABLED=n
 

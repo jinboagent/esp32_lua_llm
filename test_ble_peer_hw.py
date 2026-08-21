@@ -10,10 +10,11 @@ data plane can be verified without depending on ambient RF:
       it with exactly those fields (name-based advertising is rejected by
       this Windows adapter, so the peer is identified by manufacturer data).
   P2  dedup cadence on the controlled peer (~1 line/s while it advertises).
-  P3  connection boundary, v1: while the dongle scans, the PC scans back —
+  P3  connection boundary: while the dongle scans, the PC scans back —
       the dongle must NOT be discoverable/connectable (passive scanner,
-      no advertisement / GATT server). PC<->dongle connections are a v2
-      feature; this test pins the v1 boundary.
+      no advertisement / GATT server). F2.4 added an optional *central*
+      role (the dongle connects out), but it still neither advertises
+      nor accepts connections; this test pins that boundary.
   P4  radio contention: dongle keeps streaming while the PC adapter runs
       its own active BLE scan.
 

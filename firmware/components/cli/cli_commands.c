@@ -120,6 +120,25 @@ static int h_status(char *response, uint16_t response_len)
     uint32_t lua_used = 0, lua_peak = 0;
     lua_engine_pool_stats(&lua_used, &lua_peak);
 
+    /* F2.4: additive conn sub-object (host consumers ignore unknown) */
+    char conn_frag[80];
+#ifdef CONFIG_BLE_CONN_ENABLED
+    {
+        ble_conn_info_t ci;
+        ble_conn_get_info(&ci);
+        char caddr[18];
+        snprintf(caddr, sizeof(caddr), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 ci.addr[0], ci.addr[1], ci.addr[2],
+                 ci.addr[3], ci.addr[4], ci.addr[5]);
+        snprintf(conn_frag, sizeof(conn_frag),
+                 "\"conn\":{\"enabled\":true,\"connected\":%s,"
+                 "\"addr\":\"%s\"},",
+                 ci.connected ? "true" : "false", caddr);
+    }
+#else
+    snprintf(conn_frag, sizeof(conn_frag), "\"conn\":{\"enabled\":false},");
+#endif
+
     const char *state_name = "idle";
     cli_state_t st = cli_get_state();
     if (st == CLI_STATE_SCANNING) state_name = "scanning";
@@ -138,6 +157,7 @@ static int h_status(char *response, uint16_t response_len)
         "\"free_storage\":%lu,"
         "\"free_heap\":%lu,"
         "\"lua_pool\":{\"used\":%lu,\"peak\":%lu},"
+        "%s"
         "\"pipeline\":{\"received\":%lu,\"filtered\":%lu,"
         "\"output\":%lu,\"parse_err\":%lu,\"encode_err\":%lu}}",
         state_name,
@@ -154,6 +174,7 @@ static int h_status(char *response, uint16_t response_len)
         (unsigned long)esp_get_free_heap_size(),
         (unsigned long)lua_used,
         (unsigned long)lua_peak,
+        conn_frag,
         (unsigned long)stats.total_received,
         (unsigned long)stats.total_filtered,
         (unsigned long)stats.total_output,
@@ -646,6 +667,143 @@ static int h_power(const char *action, char *response, uint16_t response_len)
                           "POWER SLEEP ON|OFF|STATUS");
 }
 
+/* ---- CONN (F2.4) --------------------------------------------------------- */
+
+static int s_conn_err(char *response, uint16_t response_len,
+                      const char *cmd, int code, const char *msg)
+{
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"error\",\"cmd\":\"%s\",\"code\":%d,\"msg\":\"%s\"}",
+        cmd, code, msg);
+    return 0;
+}
+
+#ifdef CONFIG_BLE_CONN_ENABLED
+static int h_conn(const char *args, char *response, uint16_t response_len)
+{
+    if (strcmp(args, "STATUS") == 0) {
+        ble_conn_info_t info;
+        ble_conn_get_info(&info);
+        char addr_str[18];
+        snprintf(addr_str, sizeof(addr_str),
+                 "%02X:%02X:%02X:%02X:%02X:%02X",
+                 info.addr[0], info.addr[1], info.addr[2],
+                 info.addr[3], info.addr[4], info.addr[5]);
+        const char *stn = "idle";
+        switch (info.state) {
+        case BLE_CONN_STATE_PEER_SEARCH:  stn = "peer_search"; break;
+        case BLE_CONN_STATE_CONNECTING:   stn = "connecting"; break;
+        case BLE_CONN_STATE_DISCOVERING:  stn = "discovering"; break;
+        case BLE_CONN_STATE_ACTIVE:       stn = "active"; break;
+        default: break;
+        }
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"conn_status\","
+            "\"conn\":{\"enabled\":true,\"state\":\"%s\","
+            "\"connected\":%s,\"addr\":\"%s\",\"addr_type\":\"%s\","
+            "\"mode\":\"%s\",\"rx_lines\":%lu,\"drops\":%lu,"
+            "\"poll_ms\":%lu}}",
+            stn,
+            info.connected ? "true" : "false",
+            addr_str,
+            info.addr_type == 0 ? "public" : "random",
+            info.notify_mode ? "notify" : "poll",
+            (unsigned long)info.rx_lines,
+            (unsigned long)info.drops,
+            (unsigned long)info.poll_ms);
+        return 0;
+    }
+
+    if (strcmp(args, "STOP") == 0) {
+        int r = ble_conn_stop();
+        if (r == BLE_CONN_ERR_NOT_CONNECTED) {
+            return s_conn_err(response, response_len, "conn_stop", r,
+                              "not connected");
+        }
+        CLI_EMIT(response, response_len,
+                 "{\"status\":\"ok\",\"cmd\":\"conn_stop\"}");
+        return 0;
+    }
+
+    /* A1 matrix: TARGET/START/INTERVAL rejected while a Lua script is
+     * running; STOP/STATUS always allowed (handled above). */
+    if (cli_get_state() == CLI_STATE_SCRIPT_RUNNING) {
+        return s_conn_err(response, response_len, "conn", -911,
+                          "not allowed while script running");
+    }
+
+    if (strncmp(args, "TARGET ", 7) == 0) {
+        char svc[40] = {0}, chr[40] = {0};
+        int n = sscanf(args + 7, "%39s %39s", svc, chr);
+        if (n < 1) {
+            return s_syntax_error(response, response_len,
+                                  "CONN TARGET <svc-uuid> [<char-uuid>]");
+        }
+        int r = ble_conn_set_target(svc, n >= 2 ? chr : NULL);
+        if (r != 0) {
+            return s_conn_err(response, response_len, "conn_target", r,
+                              r == BLE_CONN_ERR_INVALID_STATE
+                                  ? "not idle" : "invalid uuid");
+        }
+        CLI_EMIT(response, response_len,
+                 "{\"status\":\"ok\",\"cmd\":\"conn_target\"}");
+        return 0;
+    }
+
+    if (strncmp(args, "INTERVAL ", 9) == 0) {
+        int ms = atoi(args + 9);
+        int r = ble_conn_set_poll_interval((uint32_t)ms);
+        if (r != 0) {
+            return s_conn_err(response, response_len, "conn_interval", r,
+                              "range 100..10000 ms");
+        }
+        CLI_EMIT(response, response_len,
+                 "{\"status\":\"ok\",\"cmd\":\"conn_interval\"}");
+        return 0;
+    }
+
+    if (strcmp(args, "START") == 0 || strncmp(args, "START ", 6) == 0) {
+        char addr[18] = {0}, type_s[8] = {0};
+        if (args[5] == ' ') {
+            sscanf(args + 6, "%17s %7s", addr, type_s);
+        }
+        int t = -1;
+        if (type_s[0] != '\0') {
+            if (strcmp(type_s, "public") == 0) {
+                t = 0;
+            } else if (strcmp(type_s, "random") == 0) {
+                t = 1;
+            } else {
+                return s_syntax_error(response, response_len,
+                                      "CONN START [<addr> [public|random]]");
+            }
+        }
+        int r = ble_conn_start(addr[0] != '\0' ? addr : NULL, t);
+        if (r != 0) {
+            const char *msg = "failed";
+            if (r == BLE_CONN_ERR_NO_TARGET) msg = "no target configured";
+            else if (r == BLE_CONN_ERR_INVALID_STATE) msg = "not idle";
+            else if (r == BLE_CONN_ERR_INVALID_PARAM) msg = "invalid address";
+            return s_conn_err(response, response_len, "conn_start", r, msg);
+        }
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"conn_start\",\"msg\":\"%s\"}",
+            addr[0] != '\0' ? "connecting" : "searching");
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+                          "CONN TARGET|START|STOP|STATUS|INTERVAL");
+}
+#else
+static int h_conn(const char *args, char *response, uint16_t response_len)
+{
+    (void)args;
+    return s_conn_err(response, response_len, "conn", -451,
+                      "feature not enabled in this build");
+}
+#endif
+
 /* ---- Dispatch ---------------------------------------------------------- */
 
 /* True when the line is recognized as a CLI command (as opposed to a
@@ -653,7 +811,8 @@ static int h_power(const char *action, char *response, uint16_t response_len)
 static bool s_is_cli_command(const char *cmd)
 {
     static const char * const cmds[] = {
-        "STATUS", "VERSION", "SCAN", "FILTER", "LUA", "SCRIPT", "POWER", NULL
+        "STATUS", "VERSION", "SCAN", "FILTER", "LUA", "SCRIPT", "POWER",
+        "CONN", NULL
     };
     for (int i = 0; cmds[i] != NULL; i++) {
         size_t n = strlen(cmds[i]);
@@ -677,6 +836,11 @@ static int h_interrupt(char *response, uint16_t response_len)
     if (script_is_running()) {
         script_stop();
     }
+#ifdef CONFIG_BLE_CONN_ENABLED
+    /* stop-everything semantics: also drop an active connection
+     * (-453 when idle, ignored) */
+    ble_conn_stop();
+#endif
     if (ble_scan_is_active()) {
         int r1 = pipeline_stop();
         int r2 = ble_scan_stop();
@@ -752,6 +916,12 @@ int cli_process_command(const char *cmd, char *response, uint16_t response_len)
                               "POWER SLEEP ON|OFF|STATUS");
     if (strncmp(cmd, "POWER ", 6) == 0)
         return h_power(cmd + 6, response, response_len);
+
+    if (strcmp(cmd, "CONN") == 0)
+        return s_syntax_error(response, response_len,
+                              "CONN TARGET|START|STOP|STATUS|INTERVAL");
+    if (strncmp(cmd, "CONN ", 5) == 0)
+        return h_conn(cmd + 5, response, response_len);
 
     CLI_EMIT(response, response_len,
         "{\"status\":\"error\",\"msg\":\"unknown command\"}");

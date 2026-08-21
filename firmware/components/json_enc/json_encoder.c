@@ -57,6 +57,231 @@ int json_escape_str(const char *in, char *out, uint16_t out_len)
     return 0;
 }
 
+/*
+ * ========================================================================
+ *  F2.4 connection line encoder — shared pure implementation (both builds)
+ * ========================================================================
+ */
+
+/* Escape like json_escape_str but report whether truncation happened. */
+static void s_escape_track(const char *in, char *out, uint16_t out_len,
+                           bool *truncated)
+{
+    *truncated = false;
+    if (out_len < 2) {
+        out[0] = '\0';
+        *truncated = *in != '\0';
+        return;
+    }
+    uint16_t pos = 0;
+    for (const unsigned char *p = (const unsigned char *)in; *p != '\0'; p++) {
+        char esc_buf[8];
+        const char *esc = NULL;
+
+        if (*p == '"') esc = "\\\"";
+        else if (*p == '\\') esc = "\\\\";
+        else if (*p == '\n') esc = "\\n";
+        else if (*p == '\r') esc = "\\r";
+        else if (*p == '\t') esc = "\\t";
+        else if (*p == '\b') esc = "\\b";
+        else if (*p == '\f') esc = "\\f";
+        else if (*p < 0x20) {
+            snprintf(esc_buf, sizeof(esc_buf), "\\u%04x", (unsigned)*p);
+            esc = esc_buf;
+        }
+
+        if (esc == NULL) {
+            if (pos >= out_len - 1) { *truncated = true; break; }
+            out[pos++] = (char)*p;
+        } else {
+            uint16_t esc_len = (uint16_t)strlen(esc);
+            if (pos + esc_len > out_len - 1) { *truncated = true; break; }
+            memcpy(out + pos, esc, esc_len);
+            pos += esc_len;
+        }
+    }
+    out[pos] = '\0';
+}
+
+/* True when s is a JSON object (ws-tolerant, string/escape aware). */
+static bool s_is_json_object(const char *s)
+{
+    const char *p = s;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    if (*p != '{') return false;
+    int depth = 0;
+    bool in_str = false, esc = false;
+    for (; *p != '\0'; p++) {
+        unsigned char c = (unsigned char)*p;
+        /* Raw control bytes are invalid JSON inside strings (they must
+         * be escaped) and, outside strings, only \t \n \r count as
+         * whitespace. Object-looking payloads that fail this take the
+         * wrap path, so the emitted line never carries a raw newline. */
+        if (c < 0x20) {
+            if (in_str || (c != '\t' && c != '\n' && c != '\r')) {
+                return false;
+            }
+            continue;
+        }
+        if (in_str) {
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"') in_str = false;
+            continue;
+        }
+        if (c == '"') { in_str = true; continue; }
+        if (c == '{' || c == '[') depth++;
+        else if (c == '}' || c == ']') {
+            depth--;
+            if (depth == 0) {
+                for (p++; *p != '\0'; p++) {
+                    unsigned char q = (unsigned char)*p;
+                    if (q != ' ' && q != '\t' && q != '\n' && q != '\r')
+                        return false;
+                }
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/* True when a top-level member key of the object collides with an
+ * envelope key (ts/addr/src) — D2: envelope wins, so wrap instead. */
+static bool s_has_colliding_key(const char *s)
+{
+    int depth = 0;
+    bool in_str = false, esc = false, expect_key = false;
+    for (const char *p = s; *p != '\0'; p++) {
+        char c = *p;
+        if (in_str) {
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"') in_str = false;
+            continue;
+        }
+        switch (c) {
+        case '"':
+            if (depth == 1 && expect_key) {
+                const char *k = p + 1;
+                const char *e = k;
+                bool kesc = false;
+                while (*e != '\0' && !(*e == '"' && !kesc)) {
+                    kesc = (*e == '\\') && !kesc;
+                    e++;
+                }
+                size_t klen = (size_t)(e - k);
+                if ((klen == 2 && memcmp(k, "ts", 2) == 0) ||
+                    (klen == 4 && memcmp(k, "addr", 4) == 0) ||
+                    (klen == 3 && memcmp(k, "src", 3) == 0)) {
+                    return true;
+                }
+                p = e;             /* loop p++ lands past the quote */
+                expect_key = false;
+            } else {
+                in_str = true;
+            }
+            break;
+        case '{': depth++; if (depth == 1) expect_key = true; break;
+        case '}': depth--; break;
+        case '[': depth++; break;
+        case ']': depth--; break;
+        case ',': if (depth == 1) expect_key = true; break;
+        default: break;
+        }
+    }
+    return false;
+}
+
+/* Member list between the outer braces, whitespace-trimmed. */
+static void s_object_inner(const char *s, const char **inner, uint16_t *len)
+{
+    const char *b = strchr(s, '{') + 1;
+    int depth = 0;
+    bool in_str = false, esc = false;
+    const char *e = b;
+    for (const char *p = b; *p != '\0'; p++) {
+        char c = *p;
+        if (in_str) {
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"') in_str = false;
+            continue;
+        }
+        if (c == '"') { in_str = true; continue; }
+        if (c == '{' || c == '[') depth++;
+        else if (c == '}' || c == ']') {
+            if (depth == 0) { e = p; break; }
+            depth--;
+        }
+    }
+    while (b < e && (*b == ' ' || *b == '\t' || *b == '\n' || *b == '\r')) b++;
+    while (e > b && (*(e-1) == ' ' || *(e-1) == '\t' || *(e-1) == '\n' || *(e-1) == '\r')) e--;
+    *inner = b;
+    *len = (uint16_t)(e - b);
+}
+
+int json_encode_conn(uint32_t ts_ms, const char *addr, const char *payload,
+                     char *buf, uint16_t buf_len, uint16_t *out_len)
+{
+    if (addr == NULL || payload == NULL || buf == NULL) {
+        return -202;
+    }
+    if (buf_len < 2) {
+        return -203;
+    }
+
+    /* Merged form: payload object without envelope-key collisions. */
+    if (s_is_json_object(payload) && !s_has_colliding_key(payload)) {
+        const char *inner = NULL;
+        uint16_t inner_len = 0;
+        s_object_inner(payload, &inner, &inner_len);
+        int n = snprintf(buf, buf_len,
+                         "{\"ts\":%lu,\"addr\":\"%s\",\"src\":\"conn\"%s%.*s}",
+                         (unsigned long)ts_ms, addr,
+                         inner_len > 0 ? "," : "", (int)inner_len, inner);
+        if (n > 0 && (uint16_t)n < buf_len) {
+            if (out_len != NULL) *out_len = (uint16_t)n;
+            return 0;
+        }
+        /* does not fit — fall through to wrapped form with trunc flag */
+    }
+
+    /* Wrapped form: envelope always wins; truncation is marked. */
+    char pre[110];
+    int pre_n = snprintf(pre, sizeof(pre),
+                         "{\"ts\":%lu,\"addr\":\"%s\",\"src\":\"conn\"",
+                         (unsigned long)ts_ms, addr);
+    if (pre_n < 0 || pre_n >= (int)sizeof(pre)) {
+        return -203;
+    }
+    const uint16_t FLAG_LEN = 13;              /* ,"trunc":true */
+    const uint16_t TAIL_LEN = 11;              /* ,"data":""}  */
+    if ((uint16_t)pre_n + TAIL_LEN + 2 > buf_len) {
+        return -203;
+    }
+    char esc[JSON_LINE_MAX_LEN];
+    bool trunc = false;
+    uint16_t room = buf_len - (uint16_t)pre_n - TAIL_LEN;
+    if (room >= sizeof(esc)) room = sizeof(esc) - 1;
+    s_escape_track(payload, esc, room, &trunc);
+    if (trunc) {
+        uint16_t room2 = buf_len - (uint16_t)pre_n - TAIL_LEN - FLAG_LEN;
+        if (room2 < 2) {
+            return -203;
+        }
+        if (room2 >= sizeof(esc)) room2 = sizeof(esc) - 1;
+        s_escape_track(payload, esc, room2, &trunc);
+    }
+    int n = snprintf(buf, buf_len, "%s%s,\"data\":\"%s\"}",
+                     pre, trunc ? ",\"trunc\":true" : "", esc);
+    if (n < 0 || (uint16_t)n >= buf_len) {
+        return -203;
+    }
+    if (out_len != NULL) *out_len = (uint16_t)n;
+    return 0;
+}
+
 #ifdef ESP_PLATFORM
 /*
  * ========================================================================

@@ -1,0 +1,14 @@
+menu "BLE Connection (GATT client) - F2.4"
+
+    config BLE_CONN_ENABLED
+        bool "Enable BLE connection (GATT client) support"
+        default y
+        select BT_NIMBLE_ROLE_CENTRAL
+        help
+            Optional central-role connection feature: connect to one peer,
+            read JSON from a GATT characteristic (notifications, or periodic
+            reads as fallback) and re-stream it on the USB JSON line stream
+            as "src":"conn" lines. When disabled, the firmware behaves
+            identically to v1.0.0 (passive observer only).
+
+endmenu

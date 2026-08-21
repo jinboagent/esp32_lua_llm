@@ -59,6 +59,22 @@ int json_encode_adv(const proto_adv_report_t *report,
  */
 int json_escape_str(const char *in, char *out, uint16_t out_len);
 
+/*
+ * Encode a connection payload as a JSON line (F2.4).
+ *
+ * Envelope keys win on collision (review D2): a payload that is a JSON
+ * object without top-level "ts"/"addr"/"src" keys is merged
+ * ({"ts":T,"addr":"A","src":"conn",<payload fields>}); anything else is
+ * wrapped (..."data":"<escaped>"). When the result would not fit, the
+ * wrapped form with "trunc":true is emitted; output is always valid
+ * JSON within buf_len. Pure computation — one implementation shared by
+ * the ESP32 and host builds.
+ *
+ * @return 0 on success, -202 NULL parameter, -203 buf_len < 2.
+ */
+int json_encode_conn(uint32_t ts_ms, const char *addr, const char *payload,
+                     char *buf, uint16_t buf_len, uint16_t *out_len);
+
 #ifdef __cplusplus
 }
 #endif

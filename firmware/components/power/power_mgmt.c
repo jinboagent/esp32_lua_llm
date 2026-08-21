@@ -28,6 +28,7 @@
 /* Calibrated estimates for the ESP32-S3 devkit (no fuel gauge on v1
  * hardware) — documented in power_if.h. */
 #define POWER_MA_SCANNING      45
+#define POWER_MA_CONNECTED     40  /* F2.4 (D1): connected + streaming */
 #define POWER_MA_ACTIVE_IDLE   30
 #define POWER_MA_LIGHT_SLEEP    8
 
@@ -40,9 +41,13 @@ static power_config_t s_config = {
 static bool s_initialized = false;
 
 #if CONFIG_PM_ENABLE
-/* No-light-sleep lock held while the device streams data (scanning). */
+/* No-light-sleep lock held while the device streams data. Two holder
+ * booleans (scan, conn) share the one lock — F2.4: stopping one stream
+ * must not release the other's block. */
 static esp_pm_lock_handle_t s_activity_lock = NULL;
 static bool s_activity_held = false;
+static bool s_conn_held = false;
+static bool s_lock_acquired = false;
 #endif
 
 static void s_apply_policy(void)
@@ -90,22 +95,33 @@ int power_init(void)
     return 0;
 }
 
-void power_hold_activity(bool hold)
+static void s_sync_pm_lock(void)
 {
 #if CONFIG_PM_ENABLE
     if (s_activity_lock == NULL) {
         return;
     }
-    if (hold && !s_activity_held) {
+    bool want = s_activity_held || s_conn_held;
+    if (want && !s_lock_acquired) {
         esp_pm_lock_acquire(s_activity_lock);
-        s_activity_held = true;
-    } else if (!hold && s_activity_held) {
+        s_lock_acquired = true;
+    } else if (!want && s_lock_acquired) {
         esp_pm_lock_release(s_activity_lock);
-        s_activity_held = false;
+        s_lock_acquired = false;
     }
-#else
-    (void)hold;
 #endif
+}
+
+void power_hold_activity(bool hold)
+{
+    s_activity_held = hold;
+    s_sync_pm_lock();
+}
+
+void power_hold_conn(bool hold)
+{
+    s_conn_held = hold;
+    s_sync_pm_lock();
 }
 
 int power_enable_sleep(bool enable)
@@ -117,9 +133,20 @@ int power_enable_sleep(bool enable)
     return 0;
 }
 
+/* F2.4 (D1): an active connection holds the radio awake, so it must be
+ * visible in POWER STATUS even with scan off. */
+static bool s_conn_active(void)
+{
+#ifdef CONFIG_BLE_CONN_ENABLED
+    return ble_conn_is_active();
+#else
+    return false;
+#endif
+}
+
 power_state_t power_get_state(void)
 {
-    if (ble_scan_is_active() || script_is_running()) {
+    if (ble_scan_is_active() || script_is_running() || s_conn_active()) {
         return POWER_STATE_ACTIVE;
     }
     return s_config.sleep_enabled ? POWER_STATE_LIGHT_SLEEP
@@ -134,6 +161,8 @@ int power_get_current_ma(uint32_t *current_ma)
 
     if (ble_scan_is_active()) {
         *current_ma = POWER_MA_SCANNING;
+    } else if (s_conn_active()) {
+        *current_ma = POWER_MA_CONNECTED;
     } else if (s_config.sleep_enabled) {
         *current_ma = POWER_MA_LIGHT_SLEEP;
     } else {
