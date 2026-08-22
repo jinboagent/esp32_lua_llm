@@ -169,3 +169,25 @@ settle §3.1 definitively on hardware.
 - This document lives on `ble_connected_zai` (`docs/`); reading it
   alongside `git diff ble_connected ble_connected_zai -- firmware/` gives
   the full line-level picture.
+
+---
+
+## 8. Addendum — improvement pass executed on `ble_connected_zai` (2026-08-22)
+
+The variant-A author evaluated B (`docs/evaluation-ble-conn-zai-2026-08-22.md`,
+also on this branch) and then applied the recommended merge **onto this
+branch** (owner instruction: improve B, leave `ble_connected` untouched):
+
+- Taken from A: named `BLE_CONN_ERR_*` constants (+ new `-457
+  INTERRUPTED`), `os_mbuf_copydata`, notice-evicts-oldest, explicit
+  `ble_att_set_preferred_mtu(256)`, the C1–C6 WinRT GATT-server HIL tier.
+- B nits fixed: `ble_scan_resume()` failure clears `s_scanning` (zombie
+  scan), `s_paused` atomic, direct-start wait sliced + Ctrl+C-aware via
+  `usb_console_poll_interrupt()` (pushback-safe one-byte lookahead; on
+  interrupt the CLI runs `h_interrupt` and the connect is cancelled).
+- Re-verified on hardware: host 108/108 · C0 29/29 · regressions
+  32/14/45/11 · on/off builds clean.
+
+The §6 merge list is therefore no longer a proposal but the state of this
+branch; `ble_connected` retains variant A as-is for reference. Remaining
+open item unchanged: C1–C6 against a real peripheral (ATC sensor pilot).

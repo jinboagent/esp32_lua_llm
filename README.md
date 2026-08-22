@@ -16,7 +16,8 @@ analysis loop.
 - Verification on COM12 hardware: host tests **108/108** · `test_bridge_hw.py`
   **32/32** · `test_power_hw.py` **14/14** · `test_ble_lua_hw.py` **45/45** ·
   `test_ble_peer_hw.py` **11/11** · `test_ble_conn_hw.py` (F2.4 C0)
-  **29/29** — GATT data path (C1–C6) awaits a real peer
+  **29/29** — GATT data path C1–C6 ported as a WinRT GATT-server tier
+  (skips where WinRT is unavailable; a real peer remains the follow-up)
 - **F2.4 optional BLE connection (GATT client)** — implemented on branch
   `ble_connected_zai` (spec: `harness/01-features/stage2-ble-core/feature_ble_conn.md`):
   `CONFIG_BLE_CONN_ENABLED` build flag + `CONN` command family; conn lines
@@ -108,7 +109,8 @@ test_bridge_hw.py      F4.1+F4.2 hardware suite (32 checks, pyserial on COM12)
 test_power_hw.py       F4.3 hardware suite (14 checks)
 test_ble_lua_hw.py     BLE+Lua data-plane suite (45 checks, keeps port open)
 test_ble_peer_hw.py    controlled BLE peer suite (11 checks, bleak + WinRT)
-test_ble_conn_hw.py    F2.4 conn control-plane suite (29 checks; GATT peer = follow-up)
+test_ble_conn_hw.py    F2.4 conn suite: C0 control plane (29) + C1-C6 WinRT
+                       GATT-server tier (skips when the API is unavailable)
 putty_sim_test.py      interactive-session simulation (CR endings, Ctrl+C)
 cr_lf_test.py          line-terminator contract (CR / LF / CRLF)
 capture_25s.py         25 s continuous-scan window check
@@ -133,7 +135,7 @@ python test_bridge_hw.py
 python test_power_hw.py
 python test_ble_lua_hw.py COM12      :: BLE+Lua data plane (~90 s)
 python test_ble_peer_hw.py COM12     :: controlled BLE peer, needs bleak+winrt (~60 s)
-python test_ble_conn_hw.py           :: F2.4 CONN control plane (~60 s)
+python test_ble_conn_hw.py           :: F2.4 CONN C0 + C1-C6 GATT tier (~60-120 s)
 
 :: Feature-off build proof (F2.4): separate config + build dir
 :: (copy sdkconfig to sdkconfig.off, unset BLE_CONN_ENABLED and
@@ -184,7 +186,7 @@ COM12 (one program owns the port at a time).
 | Layer | Tool | Covers | Checks |
 |-------|------|--------|:------:|
 | Host unit | Unity + MinGW, `tests/host` (stubs for ble/lua/storage/power/conn) | AD parser, JSON encoder + escaping + conn line model, filter logic, CLI state machine, bridge protocol, pool allocator | 108 |
-| HW command plane | `test_bridge_hw.py`, `test_power_hw.py`, `test_ble_conn_hw.py` (C0) | CLI/bridge/state guards/sandbox on device, PM behavior, CONN command family + error codes + Ctrl+C recovery + scan coexistence | 32 + 14 + 29 |
+| HW command plane | `test_bridge_hw.py`, `test_power_hw.py`, `test_ble_conn_hw.py` (C0 + C1–C6 GATT tier) | CLI/bridge/state guards/sandbox on device, PM behavior, CONN command family + error codes + Ctrl+C recovery + scan coexistence; GATT data path via WinRT server when available | 32 + 14 + 29 |
 | HW data plane | `test_ble_lua_hw.py` (ambient RF), `test_ble_peer_hw.py` (PC advertises via WinRT as a controlled peer) | JSON schema / ts monotonicity / dedup invariants, 7-arg hook ABI, suppression + transform on the live stream, v1 non-connectability | 45 + 11 |
 | Interactive & soak | `putty_sim_test.py`, `cr_lf_test.py`, `capture_25s.py`, `soak_test.py` | terminal contract (CR/LF/Ctrl+C), continuous-scan windows, 2 h pool-fragmentation soak with `free_heap`/`lua_pool` sampling | — |
 | LLM loop (host) | `llm_loop.py` | the product loop end-to-end: capture → LLM-generated Lua → deploy → verify; `--dry-run` exercises the mechanics with no API key | — |

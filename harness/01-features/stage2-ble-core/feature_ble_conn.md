@@ -131,3 +131,27 @@ additive `"conn"` object; `CONN STATUS` carries the full counters.
    telemetry; revisit if a peer requires confirmed indications.
 3. Binary payloads ≥0x80 pass through unvalidated UTF-8 in wrap mode
    (documented; hex mode rejected to keep lines small).
+
+## 8. Improvement pass (2026-08-22, by the variant-A author, on this branch)
+
+Following `docs/evaluation-ble-conn-zai-2026-08-22.md`, this branch
+absorbed the best of variant A and fixed the nits found in B:
+
+- Named error constants `BLE_CONN_ERR_*` in `ble_if.h` (incl. new
+  `-457 INTERRUPTED`); all bare literals in `ble_conn.c` replaced.
+- `os_mbuf_copydata` for notify/read payloads (chained-mbuf safe).
+- Disconnect notices evict the oldest op-queue entry instead of dropping
+  (A's notice semantics).
+- `ble_att_set_preferred_mtu(256)` explicit at init.
+- `ble_scan_resume()` failure now clears `s_scanning` (no zombie scan);
+  `s_paused` is `atomic_bool`.
+- Direct `CONN START` wait is sliced (100 ms) and honors Ctrl+C via new
+  `usb_console_poll_interrupt()` (one-byte lookahead with pushback; the
+  line stream stays intact). On interrupt the CLI runs the normal
+  `h_interrupt` semantics and the connect is cancelled.
+- C1–C6 WinRT GATT-server tier ported from A's `test_ble_conn_hw.py`
+  into this branch's suite (skips where the API is unavailable).
+
+Re-verified after the pass: host 108/108 · C0 29/29 · regressions
+32/14/45/11 · on/off builds clean. AC-9 remains open (needs a real peer);
+the ported C1–C6 tier runs it automatically wherever WinRT works.

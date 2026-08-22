@@ -66,3 +66,12 @@ llm_script.lua
 
 # LLM credentials (local only, never commit)
 .llm_env
+
+# zai-session scratch (build dirs, off-config, sensor pilot capture)
+build_off/
+build_zai.bat
+sdkconfig.off
+tests/host/build_zai/
+pilot_p0_smoke.jsonl
+hw_peer_out.txt
+build_off_check.txt
