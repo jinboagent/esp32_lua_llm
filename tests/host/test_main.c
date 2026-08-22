@@ -11,6 +11,7 @@ extern int test_filter_engine_main(void);
 extern int test_cli_main(void);
 extern int test_bridge_main(void);
 extern int test_lua_pool_main(void);
+extern int test_ble_conn_main(void);
 
 int main(void)
 {
@@ -21,5 +22,6 @@ int main(void)
     failures += test_cli_main();
     failures += test_bridge_main();
     failures += test_lua_pool_main();
+    failures += test_ble_conn_main();
     return failures;
 }

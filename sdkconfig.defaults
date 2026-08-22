@@ -32,14 +32,20 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
 CONFIG_PM_ENABLE=y
 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
 
-# Bluetooth (NimBLE) - observer role for BLE scanning
+# Bluetooth (NimBLE) - observer role for BLE scanning; the central role is
+# pulled in by BLE_CONN_ENABLED via Kconfig select (F2.4), so it is not
+# pinned here.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
-CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_DEFAULT=y
+
+# BLE connection feature (F2.4): optional GATT client, default on.
+# Set =n for the minimal passive-sniffer build (CONN answers -451).
+CONFIG_BLE_CONN_ENABLED=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 
 # Disable WiFi to save RAM (~20KB)
 CONFIG_ESP_WIFI_ENABLED=n

@@ -1,5 +1,6 @@
 #include "json_if.h"
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 /*
@@ -55,6 +56,336 @@ int json_escape_str(const char *in, char *out, uint16_t out_len)
     }
     out[pos] = '\0';
     return 0;
+}
+
+/* ========================================================================
+ * Connection line encoder (F2.4) — shared by ESP32 and host builds.
+ * Pure bounded scanner over (payload, payload_len); the payload is NOT
+ * assumed to be NUL-terminated.
+ * ======================================================================== */
+
+typedef struct {
+    char    *buf;
+    uint16_t cap;
+    uint16_t pos;
+    bool     overflow;
+} conn_wr_t;
+
+static void s_wr_bytes(conn_wr_t *w, const char *s, uint16_t n)
+{
+    if (w->overflow) return;
+    if ((uint32_t)w->pos + n >= w->cap) {   /* keep room for the NUL */
+        w->overflow = true;
+        return;
+    }
+    memcpy(w->buf + w->pos, s, n);
+    w->pos = (uint16_t)(w->pos + n);
+}
+
+static void s_wr_str(conn_wr_t *w, const char *s)
+{
+    s_wr_bytes(w, s, (uint16_t)strlen(s));
+}
+
+static bool s_wr_fmt(conn_wr_t *w, const char *fmt, ...)
+{
+    char tmp[48];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(tmp, sizeof(tmp), fmt, ap);
+    va_end(ap);
+    if (n < 0 || (size_t)n >= sizeof(tmp)) {
+        w->overflow = true;
+        return false;
+    }
+    s_wr_bytes(w, tmp, (uint16_t)n);
+    return !w->overflow;
+}
+
+static bool s_is_ws(uint8_t c)
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+/*
+ * Is the payload exactly one top-level JSON object (modulo whitespace)?
+ * Tracks strings (with escapes) and nesting so braces inside strings or
+ * nested values cannot fake a match; anything trailing the closing brace
+ * other than whitespace disqualifies it.
+ * Returns the index just past '{' in *body_start and the matching '}'
+ * index in *body_end when true.
+ */
+static bool s_conn_payload_is_object(const uint8_t *p, uint16_t len,
+                                     uint16_t *body_start, uint16_t *body_end)
+{
+    uint16_t i = 0;
+    while (i < len && s_is_ws(p[i])) i++;
+    if (i >= len || p[i] != '{') return false;
+    *body_start = (uint16_t)(i + 1);
+
+    int depth = 0;
+    bool in_str = false, esc = false;
+    for (; i < len; i++) {
+        uint8_t c = p[i];
+        if (in_str) {
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"') in_str = false;
+            continue;
+        }
+        if (c == '"') in_str = true;
+        else if (c == '{') depth++;
+        else if (c == '}') {
+            depth--;
+            if (depth == 0) {
+                *body_end = i;
+                i++;
+                while (i < len && s_is_ws(p[i])) i++;
+                return i == len;
+            }
+        }
+    }
+    return false;
+}
+
+/* True when [i..end) is exactly the quoted JSON string "key". */
+static bool s_conn_key_is(const uint8_t *p, uint16_t i, uint16_t end,
+                          const char *key)
+{
+    if (i >= end || p[i] != '"') return false;
+    uint16_t j = (uint16_t)(i + 1);
+    const uint8_t *k = (const uint8_t *)key;
+    while (j < end && *k != '\0') {
+        if (p[j] != *k) return false;
+        j++;
+        k++;
+    }
+    return *k == '\0' && j < end && p[j] == '"';
+}
+
+/*
+ * Append one top-level member (key through value end) to the output,
+ * unless its key collides with an envelope key (envelope wins, review Q3).
+ * The member scanner validates the shape "string":value as it goes; any
+ * malformed member aborts the merge (caller falls back to wrapping).
+ * Returns 0 ok, 1 member skipped (envelope key), -1 malformed payload.
+ */
+static int s_conn_append_member(conn_wr_t *w, const uint8_t *p,
+                                uint16_t key_start, uint16_t val_end)
+{
+    /* key: quoted string starting at key_start */
+    if (key_start >= val_end || p[key_start] != '"') return -1;
+    uint16_t i = (uint16_t)(key_start + 1);
+    bool in_str = true, esc = false;
+    while (i < val_end) {
+        uint8_t c = p[i];
+        if (esc) esc = false;
+        else if (c == '\\') esc = true;
+        else if (c == '"') { in_str = false; i++; break; }
+        i++;
+    }
+    if (in_str) return -1;                  /* unterminated key */
+
+    while (i < val_end && s_is_ws(p[i])) i++;
+    if (i >= val_end || p[i] != ':') return -1;
+    i++;
+    while (i < val_end && s_is_ws(p[i])) i++;
+
+    /* value: string / object / array / number / literal */
+    uint8_t c0 = (i < val_end) ? p[i] : 0;
+    if (c0 == '"') {
+        i++;                               /* skip the opening quote */
+        in_str = true; esc = false;
+        while (i < val_end) {
+            uint8_t c = p[i];
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"') { i++; in_str = false; break; }
+            i++;
+        }
+        if (in_str) return -1;
+    } else if (c0 == '{' || c0 == '[') {
+        uint8_t open = c0, close = (c0 == '{') ? '}' : ']';
+        int depth = 0; in_str = false; esc = false;
+        while (i < val_end) {
+            uint8_t c = p[i];
+            if (in_str) {
+                if (esc) esc = false;
+                else if (c == '\\') esc = true;
+                else if (c == '"') in_str = false;
+            } else if (c == '"') in_str = true;
+            else if (c == open) depth++;
+            else if (c == close) {
+                depth--;
+                if (depth == 0) { i++; break; }
+            }
+            i++;
+        }
+        if (depth != 0) return -1;
+    } else if (c0 == 't' || c0 == 'f' || c0 == 'n') {
+        /* true / false / null — accept the exact literal */
+        const char *lit = (c0 == 't') ? "true" : (c0 == 'f') ? "false" : "null";
+        for (const uint8_t *l = (const uint8_t *)lit; *l; l++, i++) {
+            if (i >= val_end || p[i] != *l) return -1;
+        }
+    } else if (c0 == '-' || (c0 >= '0' && c0 <= '9')) {
+        while (i < val_end) {
+            uint8_t c = p[i];
+            if (!((c >= '0' && c <= '9') || c == '-' || c == '+' ||
+                  c == '.' || c == 'e' || c == 'E')) break;
+            i++;
+        }
+    } else {
+        return -1;                          /* empty or unknown value */
+    }
+
+    /* Skip the whole member when its key collides with the envelope. */
+    if (s_conn_key_is(p, key_start, val_end, "ts") ||
+        s_conn_key_is(p, key_start, val_end, "addr") ||
+        s_conn_key_is(p, key_start, val_end, "src")) {
+        return 1;
+    }
+
+    s_wr_bytes(w, (const char *)(p + key_start),
+               (uint16_t)(i - key_start));
+    return w->overflow ? -1 : 0;
+}
+
+/*
+ * Append ,"data":"<escaped payload>" in wrap mode with staged budgets so
+ * a truncated string can always be closed: payload bytes may fill up to
+ * cap-4, the closing quote lands at cap-3 (its writer allows cap-2), and
+ * the caller's '}' then fits at cap-2 under the strict write check
+ * (pos + n < cap). Returns whether ALL payload bytes were written.
+ */
+static bool s_conn_write_data_value(conn_wr_t *w,
+                                    const uint8_t *p, uint16_t len)
+{
+    conn_wr_t body = *w;
+    body.cap = (uint16_t)(w->cap - 3);
+
+    s_wr_str(&body, ",\"data\":\"");
+    uint16_t i = 0;
+    for (; i < len; i++) {
+        uint8_t c = p[i];
+        char esc[8];
+        const char *e = NULL;
+        if (c == '"') e = "\\\"";
+        else if (c == '\\') e = "\\\\";
+        else if (c == '\n') e = "\\n";
+        else if (c == '\r') e = "\\r";
+        else if (c == '\t') e = "\\t";
+        else if (c < 0x20) {
+            snprintf(esc, sizeof(esc), "\\u%04x", c);
+            e = esc;
+        }
+        if (e != NULL) s_wr_str(&body, e);
+        else s_wr_bytes(&body, (const char *)&c, 1);
+        if (body.overflow) {
+            break;
+        }
+    }
+    bool all = (i == len) && !body.overflow;
+
+    conn_wr_t quote = *w;
+    quote.cap = (uint16_t)(w->cap - 2);
+    quote.pos = body.pos;                   /* budget stop is controlled */
+    s_wr_str(&quote, "\"");                 /* fits by construction */
+    w->pos = quote.pos;
+    w->overflow = quote.overflow;
+    return all;
+}
+
+int json_encode_conn(const char *addr_str, uint32_t ts_ms,
+                     const uint8_t *payload, uint16_t payload_len,
+                     char *buf, uint16_t buf_len, uint16_t *out_len)
+{
+    if (buf == NULL || addr_str == NULL || (payload == NULL && payload_len != 0)) {
+        return -202;
+    }
+    if (buf_len < 2) {
+        return -203;
+    }
+
+    conn_wr_t w = { .buf = buf, .cap = buf_len, .pos = 0, .overflow = false };
+
+    /* Envelope */
+    s_wr_str(&w, "{\"ts\":");
+    s_wr_fmt(&w, "%lu", (unsigned long)ts_ms);
+    s_wr_str(&w, ",\"addr\":\"");
+    s_wr_str(&w, addr_str);
+    s_wr_str(&w, "\",\"src\":\"conn\"");
+
+    /* Merge attempt: payload is a JSON object */
+    uint16_t body_start = 0, body_end = 0;
+    if (s_conn_payload_is_object(payload, payload_len, &body_start, &body_end)) {
+        conn_wr_t mw = { .buf = buf, .cap = buf_len, .pos = w.pos,
+                         .overflow = false };
+        bool merge_ok = true;
+        uint16_t i = body_start;
+        while (i < body_end) {
+            while (i < body_end && (s_is_ws(payload[i]) || payload[i] == ',')) i++;
+            if (i >= body_end) break;
+            /* find this member's end: scan to the next top-level comma */
+            uint16_t j = i;
+            int depth = 0; bool in_str = false, esc = false;
+            while (j < body_end) {
+                uint8_t c = payload[j];
+                if (in_str) {
+                    if (esc) esc = false;
+                    else if (c == '\\') esc = true;
+                    else if (c == '"') in_str = false;
+                } else if (c == '"') in_str = true;
+                else if (c == '{' || c == '[') depth++;
+                else if (c == '}' || c == ']') depth--;
+                else if (c == ',' && depth == 0) break;
+                j++;
+            }
+            int rc = s_conn_append_member(&mw, payload, i, j);
+            if (rc < 0) { merge_ok = false; break; }
+            i = j;
+        }
+        if (merge_ok && !mw.overflow) {
+            s_wr_str(&mw, "}");
+            if (!mw.overflow) {
+                buf[mw.pos] = '\0';
+                if (out_len != NULL) *out_len = mw.pos;
+                return 0;
+            }
+        }
+        w.overflow = false;                 /* fall through to wrap */
+    }
+
+    /* Wrap attempt: full payload as a data string. The data writer
+     * reserves its own closing budget, so the final '}' always fits. */
+    {
+        conn_wr_t ww = w;                   /* copy: envelope already written */
+        bool all = s_conn_write_data_value(&ww, payload, payload_len);
+        if (all && !ww.overflow) {
+            s_wr_str(&ww, "}");
+            if (!ww.overflow) {
+                buf[ww.pos] = '\0';
+                if (out_len != NULL) *out_len = ww.pos;
+                return 0;
+            }
+        }
+    }
+
+    /* Truncation fallback: as many data bytes as fit + "trunc":true —
+     * still valid, still one line, downstream can tell it is cut. */
+    {
+        conn_wr_t tw = w;
+        s_wr_str(&tw, ",\"trunc\":true");
+        (void)s_conn_write_data_value(&tw, payload, payload_len);
+        s_wr_str(&tw, "}");
+        if (!tw.overflow) {
+            buf[tw.pos] = '\0';
+            if (out_len != NULL) *out_len = tw.pos;
+            return 0;
+        }
+    }
+
+    return -203;                            /* buffer below the envelope floor */
 }
 
 #ifdef ESP_PLATFORM

@@ -40,9 +40,28 @@ static power_config_t s_config = {
 static bool s_initialized = false;
 
 #if CONFIG_PM_ENABLE
-/* No-light-sleep lock held while the device streams data (scanning). */
+/* No-light-sleep lock held while the device streams data. Two independent
+ * holders (scan stream, connection stream) OR into the same lock — see
+ * power_hold_conn (F2.4): stopping one never releases the other's hold. */
 static esp_pm_lock_handle_t s_activity_lock = NULL;
-static bool s_activity_held = false;
+static volatile bool s_scan_held = false;
+static volatile bool s_conn_held = false;
+static bool s_lock_acquired = false;
+
+static void s_hold_update(void)
+{
+    bool held = s_scan_held || s_conn_held;
+    if (s_activity_lock == NULL) {
+        return;
+    }
+    if (held && !s_lock_acquired) {
+        esp_pm_lock_acquire(s_activity_lock);
+        s_lock_acquired = true;
+    } else if (!held && s_lock_acquired) {
+        esp_pm_lock_release(s_activity_lock);
+        s_lock_acquired = false;
+    }
+}
 #endif
 
 static void s_apply_policy(void)
@@ -93,16 +112,18 @@ int power_init(void)
 void power_hold_activity(bool hold)
 {
 #if CONFIG_PM_ENABLE
-    if (s_activity_lock == NULL) {
-        return;
-    }
-    if (hold && !s_activity_held) {
-        esp_pm_lock_acquire(s_activity_lock);
-        s_activity_held = true;
-    } else if (!hold && s_activity_held) {
-        esp_pm_lock_release(s_activity_lock);
-        s_activity_held = false;
-    }
+    s_scan_held = hold;
+    s_hold_update();
+#else
+    (void)hold;
+#endif
+}
+
+void power_hold_conn(bool hold)
+{
+#if CONFIG_PM_ENABLE
+    s_conn_held = hold;
+    s_hold_update();
 #else
     (void)hold;
 #endif
@@ -119,12 +140,19 @@ int power_enable_sleep(bool enable)
 
 power_state_t power_get_state(void)
 {
-    if (ble_scan_is_active() || script_is_running()) {
+    bool conn_active = false;
+#if CONFIG_BLE_CONN_ENABLED
+    conn_active = ble_conn_is_active();
+#endif
+    if (ble_scan_is_active() || script_is_running() || conn_active) {
         return POWER_STATE_ACTIVE;
     }
     return s_config.sleep_enabled ? POWER_STATE_LIGHT_SLEEP
                                   : POWER_STATE_ACTIVE;
 }
+
+/* Calibrated estimate for the connected-central case (radio + link). */
+#define POWER_MA_CONN_ACTIVE  40
 
 int power_get_current_ma(uint32_t *current_ma)
 {
@@ -132,8 +160,15 @@ int power_get_current_ma(uint32_t *current_ma)
         return POWER_ERR_NULL;
     }
 
+    bool conn_active = false;
+#if CONFIG_BLE_CONN_ENABLED
+    conn_active = ble_conn_is_active();
+#endif
+
     if (ble_scan_is_active()) {
         *current_ma = POWER_MA_SCANNING;
+    } else if (conn_active) {
+        *current_ma = POWER_MA_CONN_ACTIVE;
     } else if (s_config.sleep_enabled) {
         *current_ma = POWER_MA_LIGHT_SLEEP;
     } else {

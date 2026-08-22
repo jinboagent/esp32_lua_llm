@@ -59,6 +59,34 @@ int json_encode_adv(const proto_adv_report_t *report,
  */
 int json_escape_str(const char *in, char *out, uint16_t out_len);
 
+/*
+ * Encode one connection payload as a JSON line (F2.4) on the same stream
+ * as advertisement lines, discriminated by "src":"conn".
+ *
+ * Line model (review Q3): if the payload is itself a JSON object, its
+ * members are MERGED after the envelope keys — with envelope precedence:
+ * payload keys "ts", "addr" and "src" are dropped so the envelope always
+ * wins. Any other payload (or a malformed object) is wrapped as
+ * "data":"<escaped payload>". If the merged line does not fit the buffer,
+ * encoding falls back to the wrap form; if that still does not fit, the
+ * data string is escaped-truncated and the line carries "trunc":true.
+ * The output is always valid JSON.
+ *
+ * Pure computation (no ESP-IDF) — shared by the ESP32 and host builds.
+ *
+ * @param addr_str  Peer address "AA:BB:CC:DD:EE:FF".
+ * @param ts_ms     Reception timestamp (ms since boot).
+ * @param payload   Raw payload bytes (NOT required to be NUL-terminated).
+ * @param payload_len Payload length in bytes.
+ * @param[out] buf  Output buffer. Caller-owned.
+ * @param buf_len   Size of output buffer.
+ * @param[out] out_len Bytes written (excl. NUL). May be NULL.
+ * @return 0 on success, -202 NULL parameter, -203 buf_len < 2.
+ */
+int json_encode_conn(const char *addr_str, uint32_t ts_ms,
+                     const uint8_t *payload, uint16_t payload_len,
+                     char *buf, uint16_t buf_len, uint16_t *out_len);
+
 #ifdef __cplusplus
 }
 #endif

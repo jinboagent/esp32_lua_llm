@@ -13,6 +13,16 @@
 #include "bridge_if.h"
 #include "power_if.h"
 
+#if CONFIG_BLE_CONN_ENABLED
+/* F2.4 lifecycle hook: hold the no-light-sleep lock while a connection
+ * streams, release it when the link drops. Runs in the ble host task. */
+static void s_conn_event(bool connected, const uint8_t *addr)
+{
+    (void)addr;
+    power_hold_conn(connected);
+}
+#endif
+
 void app_main(void)
 {
     printf("\n=== BLE Sniffer Dongle v1.0.0 ===\n");
@@ -22,8 +32,12 @@ void app_main(void)
     printf("Reset reason: %d\n", (int)esp_reset_reason());
     printf("Commands: STATUS, VERSION, SCAN START/STOP/INTERVAL, "
            "FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/DEINIT, "
-           "SCRIPT LOAD/BEGIN/CHUNK/END/RUN/STOP/STATUS, POWER\n");
-    printf("Ctrl+C: stop scan/script/upload immediately\n\n");
+           "SCRIPT LOAD/BEGIN/CHUNK/END/RUN/STOP/STATUS, POWER"
+#ifdef CONFIG_BLE_CONN_ENABLED
+           ", CONN TARGET/START/STOP/STATUS/INTERVAL"
+#endif
+           "\n");
+    printf("Ctrl+C: stop scan/script/upload/connection immediately\n\n");
 
     /* Initialize USB console */
     int ret = usb_console_init();
@@ -53,6 +67,18 @@ void app_main(void)
     if (ret != 0) {
         printf("WARNING: BLE init failed (%d)\n", ret);
     }
+
+#if CONFIG_BLE_CONN_ENABLED
+    /* Initialize the optional connection feature (F2.4). The event
+     * callback wires the power hold here in main — the ble component
+     * must not depend on power (power already depends on ble). */
+    ret = ble_conn_init();
+    if (ret != 0) {
+        printf("WARNING: BLE conn init failed (%d)\n", ret);
+    } else {
+        ble_conn_set_event_cb(s_conn_event);
+    }
+#endif
 
     /* Initialize pipeline (suspended, waiting for SCAN START) */
     ret = pipeline_init();

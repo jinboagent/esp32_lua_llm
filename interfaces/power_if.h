@@ -80,13 +80,23 @@ int power_get_config(power_config_t *config);
 /*
  * Hold or release the no-light-sleep activity lock.
  *
- * Held while the device streams data (BLE scanning) so console output
- * is never delayed or dropped by sleep entry — the USB-Serial/JTAG
- * console TX drops bytes once its FIFO cannot drain, which happens
- * while the SoC light-sleeps. Call symmetrically: hold on SCAN START
- * success, release on SCAN STOP. Safe to call when PM is compiled out.
+ * Held while the device streams data (BLE scanning) so console output is
+ * never delayed or dropped by sleep entry — the USB-Serial/JTAG console TX
+ * drops bytes once its FIFO cannot drain, which happens while the SoC
+ * light-sleeps. Call symmetrically: hold on SCAN START success, release on
+ * SCAN STOP. Safe to call when PM is compiled out.
  */
 void power_hold_activity(bool hold);
+
+/*
+ * Second, independent holder of the same no-light-sleep lock (F2.4): a
+ * GATT connection streams notify/poll lines, so light sleep must not cut
+ * in mid-line. Internally OR-ed with power_hold_activity — stopping the
+ * scan never releases the connection's hold and vice versa. Held/released
+ * by the connection lifecycle (wired through the F2.4 event callback in
+ * main.c, so this module needs no new dependency).
+ */
+void power_hold_conn(bool hold);
 
 #ifdef __cplusplus
 }

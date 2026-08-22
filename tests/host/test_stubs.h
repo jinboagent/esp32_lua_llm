@@ -35,5 +35,22 @@ extern char     stub_lua_exec_result[256];
 /* power stub controls */
 extern bool     stub_power_sleep_enabled;
 
+/* BLE connection stub controls (F2.4 CLI tests) */
+extern bool     stub_conn_enabled;      /* feature flag seen by handlers */
+extern int      stub_conn_state;        /* ble_conn_state_t as int       */
+extern int      stub_conn_set_target_ret;
+extern int      stub_conn_start_ret;
+extern int      stub_conn_stop_ret;
+extern char     stub_conn_target_svc[40];
+extern char     stub_conn_target_chr[40];
+extern bool     stub_conn_target_chr_set;
+extern char     stub_conn_start_addr[24];
+extern char     stub_conn_start_type[12];
+extern uint32_t stub_conn_poll_ms;
+extern uint32_t stub_conn_tx_lines;
+extern uint32_t stub_conn_dropped;
+extern uint8_t  stub_conn_peer[6];
+extern bool     stub_conn_power_hold;   /* last power_hold_conn argument */
+
 /* Reset every control to its default. */
 void stub_reset_all(void);

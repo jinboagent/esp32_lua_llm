@@ -31,6 +31,13 @@
 #define SCAN_INTERVAL_MIN_MS  10
 #define SCAN_INTERVAL_MAX_MS  10000
 
+/* The CONN command family exists in three builds: firmware with the
+ * feature (real handlers), the host test build (handlers against stubs),
+ * and firmware without the feature (-451 responses only). */
+#if defined(CONFIG_BLE_CONN_ENABLED) || defined(HOST_BUILD)
+#define CONN_CMD_SUPPORTED 1
+#endif
+
 /* Filter engine owned by the CLI (shared with the scan pipeline via
  * pipeline_set_filter(cli_get_filter_engine())) */
 static filter_engine_t s_filter_engine;
@@ -125,7 +132,10 @@ static int h_status(char *response, uint16_t response_len)
     if (st == CLI_STATE_SCANNING) state_name = "scanning";
     else if (st == CLI_STATE_SCRIPT_RUNNING) state_name = "script_running";
 
-    CLI_EMIT(response, response_len,
+    /* Assembled with s_append so the F2.4 conn section can vary by build
+     * without format-literal gymnastics. */
+    int off = 0;
+    int ret = s_append(response, response_len, &off,
         "{\"status\":\"ok\",\"cmd\":\"status\","
         "\"state\":\"%s\","
         "\"reset_reason\":%d,"
@@ -139,7 +149,7 @@ static int h_status(char *response, uint16_t response_len)
         "\"free_heap\":%lu,"
         "\"lua_pool\":{\"used\":%lu,\"peak\":%lu},"
         "\"pipeline\":{\"received\":%lu,\"filtered\":%lu,"
-        "\"output\":%lu,\"parse_err\":%lu,\"encode_err\":%lu}}",
+        "\"output\":%lu,\"parse_err\":%lu,\"encode_err\":%lu},",
         state_name,
         /* Boot observability: how this boot happened (11 = USB reset,
          * which the host triggers by closing the port mid-scan) */
@@ -159,7 +169,33 @@ static int h_status(char *response, uint16_t response_len)
         (unsigned long)stats.total_output,
         (unsigned long)stats.parse_errors,
         (unsigned long)stats.encode_errors);
-    return 0;
+    if (ret != 0) return ret;
+
+#ifdef CONN_CMD_SUPPORTED
+    /* F2.4: additive conn object — existing host consumers ignore it. */
+    ble_conn_status_t cs;
+    ble_conn_get_status(&cs);
+    char conn_addr[18] = "00:00:00:00:00:00";
+    if (cs.state != BLE_CONN_STATE_OFF) {
+        snprintf(conn_addr, sizeof(conn_addr), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 cs.peer_addr[0], cs.peer_addr[1], cs.peer_addr[2],
+                 cs.peer_addr[3], cs.peer_addr[4], cs.peer_addr[5]);
+    }
+    ret = s_append(response, response_len, &off,
+        "\"conn\":{\"enabled\":true,\"state\":\"%s\",\"active\":%s,"
+        "\"addr\":\"%s\",\"tx_lines\":%lu,\"dropped\":%lu},",
+        ble_conn_state_name(cs.state),
+        ble_conn_is_active() ? "true" : "false",
+        conn_addr,
+        (unsigned long)cs.tx_lines, (unsigned long)cs.dropped);
+    if (ret != 0) return ret;
+#else
+    ret = s_append(response, response_len, &off,
+        "\"conn\":{\"enabled\":false},");
+    if (ret != 0) return ret;
+#endif
+
+    return s_append(response, response_len, &off, "\"v\":1}");
 }
 
 static int h_version(char *response, uint16_t response_len)
@@ -646,6 +682,150 @@ static int h_power(const char *action, char *response, uint16_t response_len)
                           "POWER SLEEP ON|OFF|STATUS");
 }
 
+/* ---- CONN (F4 extension for F2.4 BLE connection) ---------------------- */
+
+#ifdef CONN_CMD_SUPPORTED
+
+/* State matrix (review A1): CONN composes with scanning but not with a
+ * running script — conn lines bypass the Lua hooks, so running both would
+ * be misleading. STOP and STATUS are always allowed (recovery/observe). */
+static int h_conn(const char *action, char *response, uint16_t response_len)
+{
+    cli_state_t st = cli_get_state();
+
+    if (strcmp(action, "TARGET") == 0 || strncmp(action, "TARGET ", 7) == 0) {
+        if (st == CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "conn_target",
+                                 "stop the script first");
+        const char *args = (action[6] == ' ') ? action + 7 : NULL;
+        char svc[40] = {0}, chr[40] = {0};
+        if (args == NULL || sscanf(args, "%39s %39s", svc, chr) < 1) {
+            return s_syntax_error(response, response_len,
+                                  "CONN TARGET <svc-uuid> [<char-uuid>]");
+        }
+        const char *chr_arg = (strchr(args, ' ') != NULL) ? chr : NULL;
+        int ret = ble_conn_set_target(svc, chr_arg);
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"conn_target\",\"svc\":\"%s\""
+                "%s%s}",
+                svc, chr_arg ? ",\"chr\":\"" : "", chr_arg ? chr : "");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"conn_target\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "START") == 0 || strncmp(action, "START ", 6) == 0) {
+        if (st == CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "conn_start",
+                                 "stop the script first");
+        const char *args = (action[5] == ' ') ? action + 6 : NULL;
+        char addr[24] = {0}, type[12] = {0};
+        const char *addr_arg = NULL, *type_arg = NULL;
+        if (args != NULL && sscanf(args, "%23s %11s", addr, type) >= 1) {
+            addr_arg = addr;
+            /* Second token only meaningful when it is a type word; the
+             * sscanf above may grab garbage into type when absent. */
+            const char *second = strchr(args, ' ');
+            type_arg = (second != NULL && second[1] != '\0') ? type : NULL;
+        }
+        /* Direct connect blocks until up/failed (bounded by the link
+         * timeout); auto-connect returns immediately. */
+        int ret = ble_conn_start(addr_arg, type_arg);
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"conn_start\",\"mode\":\"%s\"}",
+                addr_arg ? "direct" : "auto");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"conn_start\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "STOP") == 0) {
+        int ret = ble_conn_stop();
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"conn_stop\"}");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"conn_stop\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "STATUS") == 0) {
+        ble_conn_status_t cs;
+        ble_conn_get_status(&cs);
+        char addr_str[18] = "00:00:00:00:00:00";
+        bool have_addr = (cs.state != BLE_CONN_STATE_OFF);
+        if (have_addr) {
+            snprintf(addr_str, sizeof(addr_str),
+                     "%02X:%02X:%02X:%02X:%02X:%02X",
+                     cs.peer_addr[0], cs.peer_addr[1], cs.peer_addr[2],
+                     cs.peer_addr[3], cs.peer_addr[4], cs.peer_addr[5]);
+        }
+        const char *mode = cs.subscribed ? "notify" :
+                           (cs.polling ? "poll" : "none");
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"conn_status\","
+            "\"state\":\"%s\",\"addr\":\"%s\",\"mode\":\"%s\","
+            "\"mtu\":%u,\"poll_interval_ms\":%lu,"
+            "\"connects\":%lu,\"disconnects\":%lu,"
+            "\"rx_notify\":%lu,\"rx_read\":%lu,\"tx_lines\":%lu,"
+            "\"dropped\":%lu,\"errors\":%lu}",
+            ble_conn_state_name(cs.state), addr_str, mode,
+            (unsigned)cs.mtu, (unsigned long)cs.poll_interval_ms,
+            (unsigned long)cs.connects, (unsigned long)cs.disconnects,
+            (unsigned long)cs.rx_notify, (unsigned long)cs.rx_read,
+            (unsigned long)cs.tx_lines, (unsigned long)cs.dropped,
+            (unsigned long)cs.errors);
+        return 0;
+    }
+
+    if (strncmp(action, "INTERVAL ", 9) == 0) {
+        if (st == CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "conn_interval",
+                                 "stop the script first");
+        char *end = NULL;
+        long ms = strtol(action + 9, &end, 10);
+        if (end == action + 9 || *end != '\0' ||
+            ms < BLE_CONN_POLL_MIN_MS || ms > BLE_CONN_POLL_MAX_MS) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"conn_interval\","
+                "\"msg\":\"invalid value: expected %d..%d ms\"}",
+                BLE_CONN_POLL_MIN_MS, BLE_CONN_POLL_MAX_MS);
+            return 0;
+        }
+        ble_conn_set_poll_interval((uint32_t)ms);
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"conn_interval\",\"value\":%ld}", ms);
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+                          "CONN TARGET|START|STOP|STATUS|INTERVAL <ms>");
+}
+
+#else /* feature excluded from this build */
+
+static int h_conn(const char *action, char *response, uint16_t response_len)
+{
+    (void)action;
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"error\",\"cmd\":\"conn\",\"code\":-451,"
+        "\"msg\":\"connection feature not compiled in\"}");
+    return 0;
+}
+
+#endif /* CONN_CMD_SUPPORTED */
+
 /* ---- Dispatch ---------------------------------------------------------- */
 
 /* True when the line is recognized as a CLI command (as opposed to a
@@ -653,7 +833,8 @@ static int h_power(const char *action, char *response, uint16_t response_len)
 static bool s_is_cli_command(const char *cmd)
 {
     static const char * const cmds[] = {
-        "STATUS", "VERSION", "SCAN", "FILTER", "LUA", "SCRIPT", "POWER", NULL
+        "STATUS", "VERSION", "SCAN", "FILTER", "LUA", "SCRIPT", "POWER",
+        "CONN", NULL
     };
     for (int i = 0; cmds[i] != NULL; i++) {
         size_t n = strlen(cmds[i]);
@@ -671,22 +852,35 @@ static bool s_is_cli_command(const char *cmd)
  * scan) so a flooded terminal can always be recovered with one key. */
 static int h_interrupt(char *response, uint16_t response_len)
 {
+    int fails = 0;
     if (bridge_is_uploading()) {
         bridge_abort();
     }
     if (script_is_running()) {
         script_stop();
     }
+#ifdef CONN_CMD_SUPPORTED
+    /* F2.4: one key recovers everything — the connection too. The power
+     * hold is released by the disconnect event callback (main.c wiring). */
+    if (ble_conn_get_state() != BLE_CONN_STATE_OFF) {
+        if (ble_conn_stop() != 0) {
+            fails++;
+        }
+    }
+#endif
     if (ble_scan_is_active()) {
         int r1 = pipeline_stop();
         int r2 = ble_scan_stop();
         power_hold_activity(false);
         if (r1 != 0 || r2 != 0) {
-            CLI_EMIT(response, response_len,
-                "{\"status\":\"error\",\"cmd\":\"interrupt\","
-                "\"msg\":\"stop failed: %d/%d\"}", r1, r2);
-            return 0;
+            fails++;
         }
+    }
+    if (fails > 0) {
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"interrupt\","
+            "\"msg\":\"stop incomplete — check STATUS\"}");
+        return 0;
     }
     CLI_EMIT(response, response_len,
         "{\"status\":\"ok\",\"cmd\":\"interrupt\"}");
@@ -752,6 +946,16 @@ int cli_process_command(const char *cmd, char *response, uint16_t response_len)
                               "POWER SLEEP ON|OFF|STATUS");
     if (strncmp(cmd, "POWER ", 6) == 0)
         return h_power(cmd + 6, response, response_len);
+
+    if (strcmp(cmd, "CONN") == 0)
+        return s_syntax_error(response, response_len,
+#ifdef CONN_CMD_SUPPORTED
+                              "CONN TARGET|START|STOP|STATUS|INTERVAL <ms>");
+#else
+                              "CONN (not compiled in)");
+#endif
+    if (strncmp(cmd, "CONN ", 5) == 0)
+        return h_conn(cmd + 5, response, response_len);
 
     CLI_EMIT(response, response_len,
         "{\"status\":\"error\",\"msg\":\"unknown command\"}");

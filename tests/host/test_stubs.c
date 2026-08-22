@@ -30,6 +30,24 @@ char     stub_lua_exec_result[256];
 
 bool     stub_power_sleep_enabled;
 
+/* ---- BLE connection stubs (F2.4) ---- */
+
+bool     stub_conn_enabled = true;
+int      stub_conn_state = BLE_CONN_STATE_OFF;
+int      stub_conn_set_target_ret;
+int      stub_conn_start_ret;
+int      stub_conn_stop_ret;
+char     stub_conn_target_svc[40];
+char     stub_conn_target_chr[40];
+bool     stub_conn_target_chr_set;
+char     stub_conn_start_addr[24];
+char     stub_conn_start_type[12];
+uint32_t stub_conn_poll_ms = 1000;
+uint32_t stub_conn_tx_lines;
+uint32_t stub_conn_dropped;
+uint8_t  stub_conn_peer[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+bool     stub_conn_power_hold;
+
 void stub_reset_all(void)
 {
     stub_ble_ready = true;
@@ -48,6 +66,21 @@ void stub_reset_all(void)
     stub_lua_exec_ret = 0;
     snprintf(stub_lua_exec_result, sizeof(stub_lua_exec_result), "ok");
     stub_power_sleep_enabled = true;
+
+    stub_conn_enabled = true;
+    stub_conn_state = BLE_CONN_STATE_OFF;
+    stub_conn_set_target_ret = 0;
+    stub_conn_start_ret = 0;
+    stub_conn_stop_ret = 0;
+    stub_conn_target_svc[0] = '\0';
+    stub_conn_target_chr[0] = '\0';
+    stub_conn_target_chr_set = false;
+    stub_conn_start_addr[0] = '\0';
+    stub_conn_start_type[0] = '\0';
+    stub_conn_poll_ms = 1000;
+    stub_conn_tx_lines = 5;
+    stub_conn_dropped = 0;
+    stub_conn_power_hold = false;
 }
 
 /* ---- BLE ---- */
@@ -63,6 +96,71 @@ int  ble_scan_set_params(uint32_t interval_ms, uint32_t window_ms)
     return 0;
 }
 uint32_t ble_scan_get_drop_count(void) { return 0; }
+void ble_scan_set_tap(void (*tap)(const adv_report_raw_t *report)) { (void)tap; }
+void ble_scan_pause(void) {}
+void ble_scan_resume(void) {}
+
+/* ---- BLE connection (F2.4) ---- */
+
+int  ble_conn_init(void)                { return 0; }
+void ble_conn_set_event_cb(ble_conn_event_fn cb) { (void)cb; }
+int  ble_conn_set_target(const char *svc, const char *chr)
+{
+    if (stub_conn_set_target_ret != 0) return stub_conn_set_target_ret;
+    snprintf(stub_conn_target_svc, sizeof(stub_conn_target_svc), "%s", svc);
+    if (chr != NULL) {
+        snprintf(stub_conn_target_chr, sizeof(stub_conn_target_chr), "%s", chr);
+        stub_conn_target_chr_set = true;
+    } else {
+        stub_conn_target_chr_set = false;
+    }
+    return 0;
+}
+int  ble_conn_start(const char *addr, const char *type)
+{
+    if (stub_conn_start_ret != 0) return stub_conn_start_ret;
+    snprintf(stub_conn_start_addr, sizeof(stub_conn_start_addr), "%s",
+             addr ? addr : "");
+    snprintf(stub_conn_start_type, sizeof(stub_conn_start_type), "%s",
+             type ? type : "");
+    stub_conn_state = addr ? BLE_CONN_STATE_ACTIVE : BLE_CONN_STATE_PEER_SEARCH;
+    return 0;
+}
+int  ble_conn_stop(void)
+{
+    if (stub_conn_stop_ret != 0) return stub_conn_stop_ret;
+    stub_conn_state = BLE_CONN_STATE_OFF;
+    return 0;
+}
+ble_conn_state_t ble_conn_get_state(void) { return (ble_conn_state_t)stub_conn_state; }
+const char *ble_conn_state_name(ble_conn_state_t st)
+{
+    switch (st) {
+        case BLE_CONN_STATE_PEER_SEARCH: return "peer_search";
+        case BLE_CONN_STATE_CONNECTING:  return "connecting";
+        case BLE_CONN_STATE_DISCOVERING: return "discovering";
+        case BLE_CONN_STATE_ACTIVE:      return "active";
+        default:                         return "off";
+    }
+}
+bool ble_conn_is_active(void) { return stub_conn_state == BLE_CONN_STATE_ACTIVE; }
+void ble_conn_get_status(ble_conn_status_t *out)
+{
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    out->state = (ble_conn_state_t)stub_conn_state;
+    out->poll_interval_ms = stub_conn_poll_ms;
+    out->tx_lines = stub_conn_tx_lines;
+    out->dropped = stub_conn_dropped;
+    out->subscribed = (stub_conn_state == BLE_CONN_STATE_ACTIVE);
+    memcpy(out->peer_addr, stub_conn_peer, 6);
+}
+int  ble_conn_set_poll_interval(uint32_t ms)
+{
+    if (ms < BLE_CONN_POLL_MIN_MS || ms > BLE_CONN_POLL_MAX_MS) return -450;
+    stub_conn_poll_ms = ms;
+    return 0;
+}
 
 /* ---- Pipeline ---- */
 
@@ -166,6 +264,7 @@ int  storage_get_free_space(uint32_t *free_bytes)
 int  power_init(void)            { return 0; }
 int  power_enable_sleep(bool en) { stub_power_sleep_enabled = en; return 0; }
 void power_hold_activity(bool hold) { (void)hold; }
+void power_hold_conn(bool hold) { stub_conn_power_hold = hold; }
 
 power_state_t power_get_state(void)
 {

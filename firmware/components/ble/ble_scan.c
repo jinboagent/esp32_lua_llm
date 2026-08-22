@@ -19,6 +19,12 @@ static QueueHandle_t s_scan_queue = NULL;
 static atomic_bool s_scanning = false;  /* B-S2-2 fix: atomic access */
 static atomic_uint s_queue_drop_count = 0;  /* M-S2-4 fix: observability */
 
+/* F2.4 seams: raw-report tap (pre-dedup, every advertisement) and the
+ * discovery pause flag that lets the connection feature briefly use the
+ * single GAP procedure slot without losing the user's scan. */
+static void (*s_tap)(const adv_report_raw_t *report) = NULL;
+static bool s_paused = false;
+
 /* Protects s_dedup against concurrent access from the NimBLE host task
  * (GAP event handler) and the CLI task (memset in ble_scan_start) — B-S2-3
  * fix. Task-level critical section; the table is only touched for a few
@@ -140,11 +146,6 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISC: {
         struct ble_gap_disc_desc *disc = &event->disc;
 
-        /* Dedup check */
-        if (s_dedup_check(disc->addr.val)) {
-            return 0; /* skip duplicate */
-        }
-
         /* Build raw report */
         adv_report_raw_t report;
         memcpy(report.addr, disc->addr.val, 6);
@@ -161,6 +162,18 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
         report.adv_data_len = data_len;
         memcpy(report.adv_data, disc->data, data_len);
 
+        /* F2.4 tap: fires for EVERY report, BEFORE dedup, so an
+         * auto-connect search sees a peer even at the top of a dedup
+         * window. Callback must be non-blocking. */
+        if (s_tap != NULL) {
+            s_tap(&report);
+        }
+
+        /* Dedup check */
+        if (s_dedup_check(disc->addr.val)) {
+            return 0; /* skip duplicate */
+        }
+
         /* Non-blocking enqueue — drop if queue full (counted, M-S2-4 fix) */
         if (xQueueSend(s_scan_queue, &report, 0) != pdTRUE) {
             atomic_fetch_add(&s_queue_drop_count, 1);
@@ -173,8 +186,9 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
          * continuous sniffer must start the next window here — the old
          * code just marked the scan over, so every scan died after ~10 s.
          * ble_scan_stop clears s_scanning before cancelling, so a
-         * user-requested stop never restarts. */
-        if (atomic_load(&s_scanning)) {
+         * user-requested stop never restarts. F2.4: neither does a pause
+         * (the connection feature resumes explicitly). */
+        if (atomic_load(&s_scanning) && !s_paused) {
             int rc = s_start_discovery();
             if (rc != 0) {
                 atomic_store(&s_scanning, false);
@@ -209,6 +223,7 @@ int ble_scan_start(void)
         xQueueReset(s_scan_queue);
     }
     atomic_store(&s_queue_drop_count, 0);
+    s_paused = false;   /* F2.4: a fresh start is never paused */
 
     /* Clear dedup table under the same lock that protects it from the GAP
      * event handler — a handler callback from the previous scan may still
@@ -251,6 +266,7 @@ int ble_scan_stop(void)
     if (s_scan_queue != NULL) {
         xQueueReset(s_scan_queue);
     }
+    s_paused = false;   /* F2.4: a stop clears any pending pause */
 
     printf("BLE: scan stopped\n");
     return 0;
@@ -300,4 +316,37 @@ int ble_scan_get_report(adv_report_raw_t *out, uint32_t timeout_ms)
         return 0;
     }
     return -5; /* timeout */
+}
+
+/* ---- F2.4 seams (see ble_if.h) ---------------------------------------- */
+
+void ble_scan_set_tap(void (*tap)(const adv_report_raw_t *report))
+{
+    s_tap = tap;
+}
+
+void ble_scan_pause(void)
+{
+    /* No-op when not scanning; cancels discovery but keeps the
+     * user-visible scanning state (ble_scan_is_active stays true). */
+    if (!atomic_load(&s_scanning) || s_paused) {
+        return;
+    }
+    s_paused = true;
+    int rc = ble_gap_disc_cancel();
+    if (rc != 0 && rc != BLE_HS_EALREADY) {
+        printf("BLE: scan pause cancel failed (%d)\n", rc);
+    }
+}
+
+void ble_scan_resume(void)
+{
+    if (!atomic_load(&s_scanning) || !s_paused) {
+        return;
+    }
+    s_paused = false;
+    int rc = s_start_discovery();
+    if (rc != 0) {
+        printf("BLE: scan resume failed (%d)\n", rc);
+    }
 }
