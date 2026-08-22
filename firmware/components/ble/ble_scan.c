@@ -23,7 +23,7 @@ static atomic_uint s_queue_drop_count = 0;  /* M-S2-4 fix: observability */
  * discovery pause flag that lets the connection feature briefly use the
  * single GAP procedure slot without losing the user's scan. */
 static void (*s_tap)(const adv_report_raw_t *report) = NULL;
-static bool s_paused = false;
+static atomic_bool s_paused = false;  /* read by the host task (DISC_COMPLETE) */
 
 /* Protects s_dedup against concurrent access from the NimBLE host task
  * (GAP event handler) and the CLI task (memset in ble_scan_start) — B-S2-3
@@ -188,7 +188,7 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
          * ble_scan_stop clears s_scanning before cancelling, so a
          * user-requested stop never restarts. F2.4: neither does a pause
          * (the connection feature resumes explicitly). */
-        if (atomic_load(&s_scanning) && !s_paused) {
+        if (atomic_load(&s_scanning) && !atomic_load(&s_paused)) {
             int rc = s_start_discovery();
             if (rc != 0) {
                 atomic_store(&s_scanning, false);
@@ -223,7 +223,7 @@ int ble_scan_start(void)
         xQueueReset(s_scan_queue);
     }
     atomic_store(&s_queue_drop_count, 0);
-    s_paused = false;   /* F2.4: a fresh start is never paused */
+    atomic_store(&s_paused, false);   /* F2.4: a fresh start is never paused */
 
     /* Clear dedup table under the same lock that protects it from the GAP
      * event handler — a handler callback from the previous scan may still
@@ -266,7 +266,7 @@ int ble_scan_stop(void)
     if (s_scan_queue != NULL) {
         xQueueReset(s_scan_queue);
     }
-    s_paused = false;   /* F2.4: a stop clears any pending pause */
+    atomic_store(&s_paused, false);   /* F2.4: a stop clears any pending pause */
 
     printf("BLE: scan stopped\n");
     return 0;
@@ -329,10 +329,10 @@ void ble_scan_pause(void)
 {
     /* No-op when not scanning; cancels discovery but keeps the
      * user-visible scanning state (ble_scan_is_active stays true). */
-    if (!atomic_load(&s_scanning) || s_paused) {
+    if (!atomic_load(&s_scanning) || atomic_load(&s_paused)) {
         return;
     }
-    s_paused = true;
+    atomic_store(&s_paused, true);
     int rc = ble_gap_disc_cancel();
     if (rc != 0 && rc != BLE_HS_EALREADY) {
         printf("BLE: scan pause cancel failed (%d)\n", rc);
@@ -341,12 +341,15 @@ void ble_scan_pause(void)
 
 void ble_scan_resume(void)
 {
-    if (!atomic_load(&s_scanning) || !s_paused) {
+    if (!atomic_load(&s_scanning) || !atomic_load(&s_paused)) {
         return;
     }
-    s_paused = false;
+    atomic_store(&s_paused, false);
     int rc = s_start_discovery();
     if (rc != 0) {
-        printf("BLE: scan resume failed (%d)\n", rc);
+        /* Mirror the DISC_COMPLETE path: a scan that cannot restart is
+         * not a scan (avoids a zombie s_scanning with no discovery). */
+        printf("BLE: scan resume failed (%d) — scanning stopped\n", rc);
+        atomic_store(&s_scanning, false);
     }
 }

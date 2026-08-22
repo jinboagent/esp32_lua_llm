@@ -66,6 +66,23 @@ int usb_console_send_json(const char *json_line)
     return usb_console_send_line(json_line);
 }
 
+bool usb_console_poll_interrupt(void)
+{
+    if (!s_initialized) {
+        return false;
+    }
+    int c = s_read_byte();
+    if (c == EOF) {
+        return false;
+    }
+    if (c == 0x03) {
+        return true;
+    }
+    /* Not an interrupt: preserve the byte for the next read_line. */
+    s_pushback = c;
+    return false;
+}
+
 int usb_console_read_line(char *buf, uint16_t buf_len, uint32_t timeout_ms)
 {
     if (buf == NULL || buf_len == 0) {

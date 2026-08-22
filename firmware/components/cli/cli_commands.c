@@ -689,6 +689,8 @@ static int h_power(const char *action, char *response, uint16_t response_len)
 /* State matrix (review A1): CONN composes with scanning but not with a
  * running script — conn lines bypass the Lua hooks, so running both would
  * be misleading. STOP and STATUS are always allowed (recovery/observe). */
+static int h_interrupt(char *response, uint16_t response_len);  /* fwd */
+
 static int h_conn(const char *action, char *response, uint16_t response_len)
 {
     cli_state_t st = cli_get_state();
@@ -735,6 +737,11 @@ static int h_conn(const char *action, char *response, uint16_t response_len)
         /* Direct connect blocks until up/failed (bounded by the link
          * timeout); auto-connect returns immediately. */
         int ret = ble_conn_start(addr_arg, type_arg);
+        if (ret == BLE_CONN_ERR_INTERRUPTED) {
+            /* Ctrl+C arrived during the bounded wait: run the normal
+             * interrupt semantics (abort upload, stop script/scan/conn). */
+            return h_interrupt(response, response_len);
+        }
         if (ret == 0) {
             CLI_EMIT(response, response_len,
                 "{\"status\":\"ok\",\"cmd\":\"conn_start\",\"mode\":\"%s\"}",

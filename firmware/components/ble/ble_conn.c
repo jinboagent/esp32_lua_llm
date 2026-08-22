@@ -159,7 +159,7 @@ const char *ble_conn_state_name(ble_conn_state_t st)
 /* "AA:BB:CC:DD:EE:FF" -> bytes. Returns 0 ok, -450 malformed. */
 static int s_parse_addr(const char *str, uint8_t out[6])
 {
-    if (str == NULL || strlen(str) != 17) return -450;
+    if (str == NULL || strlen(str) != 17) return BLE_CONN_ERR_INVALID_PARAM;
     for (int i = 0; i < 6; i++) {
         int byte = 0;
         for (int h = 0; h < 2; h++) {
@@ -168,10 +168,10 @@ static int s_parse_addr(const char *str, uint8_t out[6])
             if (c >= '0' && c <= '9') v = c - '0';
             else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
             else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
-            else return -450;
+            else return BLE_CONN_ERR_INVALID_PARAM;
             byte = (byte << 4) | v;
         }
-        if (i < 5 && str[i * 3 + 2] != ':') return -450;
+        if (i < 5 && str[i * 3 + 2] != ':') return BLE_CONN_ERR_INVALID_PARAM;
         out[i] = (uint8_t)byte;
     }
     return 0;
@@ -193,28 +193,28 @@ static int s_hex_nibble(char c)
  */
 static int s_parse_uuid(const char *str, ble_uuid_any_t *uuid)
 {
-    if (str == NULL || uuid == NULL) return -450;
+    if (str == NULL || uuid == NULL) return BLE_CONN_ERR_INVALID_PARAM;
 
     uint8_t msb[16];
     int n = 0;
     for (const char *p = str; *p != '\0'; p++) {
         if (*p == '-') continue;
         int hi = s_hex_nibble(*p);
-        if (hi < 0 || n >= 32) return -450;
+        if (hi < 0 || n >= 32) return BLE_CONN_ERR_INVALID_PARAM;
         p++;
         int lo = s_hex_nibble(*p);
-        if (lo < 0) return -450;
+        if (lo < 0) return BLE_CONN_ERR_INVALID_PARAM;
         msb[n / 2] = (uint8_t)((hi << 4) | lo);
         n += 2;
     }
-    if (n != 4 && n != 8 && n != 32) return -450;
+    if (n != 4 && n != 8 && n != 32) return BLE_CONN_ERR_INVALID_PARAM;
 
     uint8_t le[16];
     for (int i = 0; i < n / 2; i++) {
         le[i] = msb[n / 2 - 1 - i];
     }
     if (ble_uuid_init_from_buf(uuid, le, n / 2) != 0) {
-        return -450;
+        return BLE_CONN_ERR_INVALID_PARAM;
     }
     return 0;
 }
@@ -281,7 +281,15 @@ static void s_post_disc_notice(const uint8_t addr[6])
 {
     conn_op_t op = { .type = CONN_OP_DISC_NOTICE };
     if (addr != NULL) memcpy(op.addr, addr, 6);
-    xQueueSend(s_op_q, &op, 0);
+    /* Disconnect notices must not be lost under load (variant A's
+     * notice semantics): if the op queue is full, evict its oldest
+     * entry instead of dropping the notice. */
+    if (xQueueSend(s_op_q, &op, 0) != pdTRUE) {
+        conn_op_t old;
+        if (xQueueReceive(s_op_q, &old, 0) == pdTRUE) {
+            xQueueSend(s_op_q, &op, 0);
+        }
+    }
 }
 
 /* Link came fully up (subscribed or polling). */
@@ -350,11 +358,11 @@ static int s_svc_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
             return ble_gattc_disc_all_chrs(s_conn_handle, s_svc_start,
                                            s_svc_end, s_chr_disc_cb, NULL);
         }
-        s_fail_connected(-454);
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
     if (error != NULL || svc == NULL) {
-        s_fail_connected(-454);
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
     s_svc_start = svc->start_handle;
@@ -369,7 +377,7 @@ static int s_chr_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
     (void)conn; (void)arg;
     if (error != NULL && error->status == BLE_HS_EDONE) {
         if (!s_chr_found) {
-            s_fail_connected(-454);
+            s_fail_connected(BLE_CONN_ERR_DISCOVERY);
             return 0;
         }
         if (s_chr_props & (BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE)) {
@@ -381,11 +389,11 @@ static int s_chr_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
             s_finish_active(false);        /* poll fallback */
             return 0;
         }
-        s_fail_connected(-454);
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
     if (error != NULL || chr == NULL) {
-        s_fail_connected(-454);
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
 
@@ -429,11 +437,11 @@ static int s_dsc_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
             s_finish_active(false);        /* no CCCD — poll what we have */
             return 0;
         }
-        s_fail_connected(-454);
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
     if (error != NULL || dsc == NULL) {
-        s_fail_connected(-454);
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
     if (ble_uuid_u16(&dsc->uuid.u) == CONN_CCCD_UUID16) {
@@ -451,7 +459,7 @@ static int s_cccd_write_cb(uint16_t conn, const struct ble_gatt_error *error,
     } else if (s_chr_props & BLE_GATT_CHR_F_READ) {
         s_finish_active(false);            /* subscribe failed — poll */
     } else {
-        s_fail_connected(-454);
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
     }
     return 0;
 }
@@ -468,11 +476,17 @@ static int s_read_cb(uint16_t conn, const struct ble_gatt_error *error,
     }
     uint16_t len = OS_MBUF_PKTLEN(attr->om);
     if (len > BLE_CONN_PAYLOAD_MAX) len = BLE_CONN_PAYLOAD_MAX;
+    /* copydata walks chained mbufs; om_data alone would only cover the
+     * first segment (variant A's safer call, adopted 2026-08-22). */
+    uint8_t tmp[BLE_CONN_PAYLOAD_MAX];
+    if (os_mbuf_copydata(attr->om, 0, len, tmp) != 0) {
+        return 0;
+    }
     uint8_t addr[6];
     xSemaphoreTake(s_mux, portMAX_DELAY);
     memcpy(addr, s_status.peer_addr, 6);
     xSemaphoreGive(s_mux);
-    s_push_rx(addr, attr->om->om_data, len, true);
+    s_push_rx(addr, tmp, len, true);
     return 0;
 }
 
@@ -500,7 +514,7 @@ static int s_gap_event(struct ble_gap_event *event, void *arg)
             int rc = ble_gattc_disc_svc_by_uuid(s_conn_handle, &s_svc_uuid.u,
                                                 s_svc_disc_cb, NULL);
             if (rc != 0) {
-                s_fail_connected(-454);
+                s_fail_connected(BLE_CONN_ERR_DISCOVERY);
             }
             return 0;
         }
@@ -511,7 +525,7 @@ static int s_gap_event(struct ble_gap_event *event, void *arg)
         xSemaphoreTake(s_mux, portMAX_DELAY);
         bool user_stop = (s_state == BLE_CONN_STATE_OFF);
         xSemaphoreGive(s_mux);
-        s_fail_no_conn(user_stop ? 0 : -455);
+        s_fail_no_conn(user_stop ? 0 : BLE_CONN_ERR_TIMEOUT);
         s_post_disc_notice(s_status.peer_addr);
         return 0;
     }
@@ -562,11 +576,15 @@ static int s_gap_event(struct ble_gap_event *event, void *arg)
         struct os_mbuf *om = event->notify_rx.om;
         uint16_t len = OS_MBUF_PKTLEN(om);
         if (len > BLE_CONN_PAYLOAD_MAX) len = BLE_CONN_PAYLOAD_MAX;
+        uint8_t tmp[BLE_CONN_PAYLOAD_MAX];
+        if (os_mbuf_copydata(om, 0, len, tmp) != 0) {
+            return 0;
+        }
         uint8_t addr[6];
         xSemaphoreTake(s_mux, portMAX_DELAY);
         memcpy(addr, s_status.peer_addr, 6);
         xSemaphoreGive(s_mux);
-        s_push_rx(addr, om->om_data, len, false);
+        s_push_rx(addr, tmp, len, false);
         return 0;
     }
 
@@ -727,7 +745,7 @@ static void s_worker_connect(const uint8_t addr[6], uint8_t addr_type)
 
     if (rc != 0) {
         printf("CONN: connect not started (%d)\n", rc);
-        s_fail_no_conn(-455);
+        s_fail_no_conn(BLE_CONN_ERR_TIMEOUT);
         s_post_disc_notice(addr);
     }
     /* rc == 0: the CONNECT event continues the sequence. */
@@ -835,6 +853,10 @@ int ble_conn_init(void)
     s_status.poll_interval_ms = BLE_CONN_POLL_DEFAULT_MS;
     s_state = BLE_CONN_STATE_OFF;
 
+    /* Explicit preferred-MTU pin (adopted from variant A); the exchange
+     * on CONNECT still drives the negotiated value. */
+    ble_att_set_preferred_mtu(256);
+
     if (xTaskCreatePinnedToCore(s_worker_task, "conn_worker",
                                 CONN_WORKER_STACK, NULL, CONN_WORKER_PRIO,
                                 &s_worker, 0) != pdPASS) {
@@ -854,20 +876,20 @@ void ble_conn_set_event_cb(ble_conn_event_fn cb)
 
 int ble_conn_set_target(const char *svc_uuid, const char *chr_uuid)
 {
-    if (svc_uuid == NULL) return -450;
+    if (svc_uuid == NULL) return BLE_CONN_ERR_INVALID_PARAM;
 
     ble_uuid_any_t svc, chr;
     bool have_chr = false;
-    if (s_parse_uuid(svc_uuid, &svc) != 0) return -450;
+    if (s_parse_uuid(svc_uuid, &svc) != 0) return BLE_CONN_ERR_INVALID_PARAM;
     if (chr_uuid != NULL) {
-        if (s_parse_uuid(chr_uuid, &chr) != 0) return -450;
+        if (s_parse_uuid(chr_uuid, &chr) != 0) return BLE_CONN_ERR_INVALID_PARAM;
         have_chr = true;
     }
 
     xSemaphoreTake(s_mux, portMAX_DELAY);
     if (s_state != BLE_CONN_STATE_OFF) {
         xSemaphoreGive(s_mux);
-        return -452;
+        return BLE_CONN_ERR_INVALID_STATE;
     }
     s_svc_uuid = svc;
     s_chr_uuid = chr;
@@ -884,12 +906,12 @@ int ble_conn_start(const char *addr_str, const char *addr_type)
     xSemaphoreTake(s_mux, portMAX_DELAY);
     if (s_state != BLE_CONN_STATE_OFF) {
         xSemaphoreGive(s_mux);
-        return -452;
+        return BLE_CONN_ERR_INVALID_STATE;
     }
     if (addr_str == NULL) {
         if (!s_have_svc) {
             xSemaphoreGive(s_mux);
-            return -456;
+            return BLE_CONN_ERR_NO_TARGET;
         }
         op.addr_type = CONN_ADDR_TYPE_SEARCH;
         s_state = BLE_CONN_STATE_PEER_SEARCH;
@@ -901,7 +923,7 @@ int ble_conn_start(const char *addr_str, const char *addr_type)
 
     if (s_parse_addr(addr_str, op.addr) != 0) {
         xSemaphoreGive(s_mux);
-        return -450;
+        return BLE_CONN_ERR_INVALID_PARAM;
     }
 
     /* Address type: explicit argument > tap auto-learn > public default
@@ -931,22 +953,40 @@ int ble_conn_start(const char *addr_str, const char *addr_type)
     while (xSemaphoreTake(s_start_sem, 0) == pdTRUE) {}   /* drain stale */
     xQueueSend(s_op_q, &op, 0);
 
-    /* Block until up or failed — bounded by connect timeout + retries. */
+    /* Block until up or failed — bounded by connect timeout + retries.
+     * Sliced so Ctrl+C on the wire aborts the wait (2026-08-22
+     * improvement): poll_interrupt consumes only 0x03 and pushes any
+     * other byte back, so the line stream stays intact. */
     const uint32_t wait_ms = CONN_CONNECT_TIMEOUT_MS +
         CONN_CONNECT_RETRIES * CONN_CONNECT_RETRY_DELAY_MS + 1500;
-    if (xSemaphoreTake(s_start_sem, pdMS_TO_TICKS(wait_ms)) != pdTRUE) {
+    bool interrupted = false;
+    bool got_sem = false;
+    for (uint32_t waited = 0; waited < wait_ms; waited += 100) {
+        if (xSemaphoreTake(s_start_sem, pdMS_TO_TICKS(100)) == pdTRUE) {
+            got_sem = true;
+            break;
+        }
+        if (usb_console_poll_interrupt()) {
+            interrupted = true;
+            ble_conn_stop();   /* cancel; the finalizer posts the sem */
+            got_sem = (xSemaphoreTake(s_start_sem,
+                       pdMS_TO_TICKS(1500)) == pdTRUE);
+            break;
+        }
+    }
+    if (!got_sem) {
         xSemaphoreTake(s_mux, portMAX_DELAY);
         bool waited = s_direct_wait;
         s_direct_wait = false;
         xSemaphoreGive(s_mux);
-        return waited ? -455 : 0;
+        return waited ? BLE_CONN_ERR_TIMEOUT : 0;
     }
 
     xSemaphoreTake(s_mux, portMAX_DELAY);
     int code = s_fail_code;
     s_fail_code = 0;
     xSemaphoreGive(s_mux);
-    return code;
+    return interrupted ? BLE_CONN_ERR_INTERRUPTED : code;
 }
 
 int ble_conn_stop(void)
@@ -960,7 +1000,7 @@ int ble_conn_stop(void)
 
     if (st == BLE_CONN_STATE_OFF) {
         xSemaphoreGive(s_mux);
-        return -453;
+        return BLE_CONN_ERR_NOT_CONNECTED;
     }
     if (st == BLE_CONN_STATE_PEER_SEARCH) {
         s_state = BLE_CONN_STATE_OFF;
@@ -1004,7 +1044,7 @@ void ble_conn_get_status(ble_conn_status_t *out)
 int ble_conn_set_poll_interval(uint32_t ms)
 {
     if (ms < BLE_CONN_POLL_MIN_MS || ms > BLE_CONN_POLL_MAX_MS) {
-        return -450;
+        return BLE_CONN_ERR_INVALID_PARAM;
     }
     xSemaphoreTake(s_mux, portMAX_DELAY);
     s_status.poll_interval_ms = ms;

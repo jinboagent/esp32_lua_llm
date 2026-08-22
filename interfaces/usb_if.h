@@ -65,6 +65,18 @@ int usb_console_read_line(char *buf, uint16_t buf_len, uint32_t timeout_ms);
  */
 int usb_console_send_json(const char *json_line);
 
+/*
+ * Non-blocking one-byte lookahead for Ctrl+C (F2.4 improvement pass
+ * 2026-08-22): consumes and reports a pending 0x03; any other byte is
+ * pushed back untouched so the normal line stream is preserved. Lets a
+ * bounded blocking wait (conn direct start) stay Ctrl+C-responsive
+ * without a separate RX task.
+ *
+ * @return true if a 0x03 was consumed, false otherwise (no byte, or a
+ *         non-interrupt byte pushed back).
+ */
+bool usb_console_poll_interrupt(void);
+
 #ifdef __cplusplus
 }
 #endif

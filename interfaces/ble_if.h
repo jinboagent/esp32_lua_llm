@@ -96,6 +96,17 @@ void ble_scan_resume(void);
 #define BLE_CONN_POLL_MAX_MS     10000
 #define BLE_CONN_POLL_DEFAULT_MS 1000
 
+/* Named error codes, module range -450..-459 (adopted from variant A in
+ * the 2026-08-22 improvement pass — names over bare numbers). */
+#define BLE_CONN_ERR_INVALID_PARAM (-450)
+#define BLE_CONN_ERR_NOT_ENABLED   (-451)
+#define BLE_CONN_ERR_INVALID_STATE (-452)
+#define BLE_CONN_ERR_NOT_CONNECTED (-453)
+#define BLE_CONN_ERR_DISCOVERY     (-454)
+#define BLE_CONN_ERR_TIMEOUT       (-455)
+#define BLE_CONN_ERR_NO_TARGET     (-456)
+#define BLE_CONN_ERR_INTERRUPTED   (-457)  /* direct start aborted by Ctrl+C */
+
 typedef enum {
     BLE_CONN_STATE_OFF = 0,      /* no connection activity                  */
     BLE_CONN_STATE_PEER_SEARCH,  /* auto-connect: waiting for target adv    */

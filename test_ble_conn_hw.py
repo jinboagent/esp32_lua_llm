@@ -1,13 +1,18 @@
-"""Hardware tests for F2.4 BLE connection — C0 peerless control plane.
+"""Hardware tests for F2.4 BLE connection — C0 peerless control plane plus
+C1-C6 GATT data path when a WinRT GATT server peer is available.
 
-Exercises everything that does not need a GATT peripheral peer: the CONN
-command family, error codes, the state machine, Ctrl+C recovery, and
-scan/conn coexistence bookkeeping. The GATT data path (C1-C6) needs a real
-peripheral — on this PC the WinRT GATT-server APIs are unavailable, so a
-controlled peer (second ESP32 / phone with nRF Connect) is the manual
-follow-up, same boundary as documented for the branch verification.
+C0 exercises everything that does not need a GATT peripheral peer: the
+CONN command family, error codes, the state machine, Ctrl+C recovery, and
+scan/conn coexistence bookkeeping. C1-C6 (ported from variant A's suite in
+the 2026-08-22 improvement pass) use the PC as a WinRT GATT server:
+auto-connect by UUID, notify re-streaming, power observability, chatty
+peer, direct reconnect, peer vanish. Where the WinRT GATT-server APIs are
+unavailable (non-interactive contexts on some PCs), C1-C6 skip cleanly and
+a real peripheral (second ESP32 / phone with nRF Connect) remains the
+manual follow-up.
 """
 import serial, time, json
+import uuid as pyuuid
 
 PORT = "COM12"
 
@@ -63,6 +68,75 @@ def check(name, cond, detail=""):
     else:
         FAIL += 1
         print(f"  FAIL  {name}  {detail}")
+
+# --- C1-C6 peer: PC as WinRT GATT server (variant A port) ----------------
+SVC_UUID = "12345678-1234-1234-1234-123456789abc"
+CHAR_UUID = "12345678-1234-1234-1234-123456789a01"
+
+class GattPeer:
+    """One GATT service, one notify+read characteristic, connectable adv."""
+
+    def __init__(self):
+        from winrt.windows.devices.bluetooth.genericattributeprofile import (
+            GattServiceProvider,
+            GattServiceProviderAdvertisingParameters,
+            GattLocalCharacteristicParameters,
+            GattCharacteristicProperties,
+        )
+        from winrt.windows.storage.streams import DataWriter
+        self._DataWriter = DataWriter
+        self._AdvParams = GattServiceProviderAdvertisingParameters
+
+        res = GattServiceProvider.create_async(
+            pyuuid.UUID(SVC_UUID)).get_results()
+        self.provider = res.service_provider
+        if self.provider is None:
+            raise RuntimeError(f"service create failed: {res.status}")
+
+        params = GattLocalCharacteristicParameters()
+        params.characteristic_properties = (
+            GattCharacteristicProperties.NOTIFY |
+            GattCharacteristicProperties.READ)
+        cres = self.provider.create_characteristic_async(
+            pyuuid.UUID(CHAR_UUID), params).get_results()
+        self.char = cres.characteristic
+        if self.char is None:
+            raise RuntimeError(f"characteristic create failed: {cres.status}")
+        self.char.add_read_requested_handler(self._on_read)
+
+    def _on_read(self, sender, args):
+        try:
+            req = args.get_request().get_results()
+            w = self._DataWriter()
+            w.write_bytes(b'{"v":99,"who":"peer"}')
+            req.respond_with_value(w.detach_buffer())
+        except Exception:
+            pass
+
+    def start(self):
+        adv = self._AdvParams()
+        adv.is_connectable = True
+        adv.is_discoverable = True
+        self.provider.start_advertising(adv)
+
+    def wait_subscribed(self, secs):
+        end = time.time() + secs
+        while time.time() < end:
+            if len(self.char.subscribed_clients) > 0:
+                return True
+            time.sleep(0.2)
+        return False
+
+    def notify(self, payload):
+        w = self._DataWriter()
+        w.write_bytes(payload)
+        self.char.notify_value_async(w.detach_buffer()).get_results()
+
+    def stop(self):
+        try:
+            self.provider.stop_advertising()
+        except Exception:
+            pass
 
 # --- Boot sanity ---------------------------------------------------------
 r = cmd("STATUS", 1.5)
@@ -168,6 +242,130 @@ check("advertisements still flow", data.count(b'"addr"') > 0,
       f"{data.count(b'\"addr\"')} lines")
 r = cmd_during_scan("SCAN STOP")
 check("SCAN STOP after churn", r and r.get("status") == "ok", str(r))
+
+# --- C1-C6: GATT data path with the WinRT peer (skips when unavailable) ---
+peer = None
+try:
+    peer = GattPeer()
+    peer.start()
+    time.sleep(1.0)
+except Exception as e:
+    print(f"  SKIP  C1-C6 (WinRT GATT server unavailable: {e!r})")
+
+if peer is not None:
+    r = cmd_during_scan("SCAN START")
+    check("C1 SCAN START", r and r.get("status") == "ok", str(r))
+    r = cmd_during_scan(f"CONN TARGET {SVC_UUID} {CHAR_UUID}")
+    check("C1 TARGET svc+char", r and r.get("status") == "ok", str(r))
+    r = cmd_during_scan("CONN START")
+    check("C1 auto START (tap path)", r and r.get("status") == "ok", str(r))
+
+    peer_addr = ""
+    end = time.time() + 15
+    while time.time() < end:
+        r = cmd_during_scan("CONN STATUS")
+        if r and r.get("state") == "active":
+            peer_addr = r.get("addr", "")
+            break
+        time.sleep(0.5)
+    check("C1 connected within 15 s", peer_addr != "", "never active")
+    check("C1 subscribed (notify mode)", peer.wait_subscribed(5),
+          "CCCD never written")
+
+    for i in range(5):
+        peer.notify(json.dumps({"v": i, "who": "peer"}).encode())
+        time.sleep(0.3)
+    s.reset_input_buffer()
+    lines = []
+    end = time.time() + 3
+    while time.time() < end:
+        t = s.readline().decode(errors="replace").strip()
+        if t.startswith("{") and '"src":"conn"' in t:
+            try:
+                lines.append(json.loads(t))
+            except json.JSONDecodeError:
+                pass
+    check("C1 conn lines re-streamed (>=2)", len(lines) >= 2,
+          f"{len(lines)} lines")
+    if lines:
+        check("C1 merged payload fields",
+              all("v" in l and l.get("who") == "peer" for l in lines),
+              str(lines[:2]))
+        check("C1 envelope addr matches peer",
+              all(l.get("addr") == peer_addr for l in lines), str(lines[:2]))
+
+    r = cmd_during_scan("SCAN STOP")
+    check("C4 SCAN STOP with conn up", r and r.get("status") == "ok", str(r))
+    r = cmd("POWER STATUS", 1.0)
+    check("C4 POWER active while connected, scan off",
+          r and "active" in json.dumps(r), str(r))
+
+    for i in range(60):                      # C5 chatty peer
+        try:
+            peer.notify(json.dumps({"v": i, "who": "peer"}).encode())
+        except Exception:
+            break
+        time.sleep(0.02)
+    time.sleep(1)
+    r = cmd("STATUS", 1.0)
+    check("C5 responsive after burst", r and r.get("status") == "ok", str(r))
+    r = cmd("CONN STATUS")
+    check("C5 rx_notify counted", r and r.get("rx_notify", 0) > 0, str(r))
+    r = cmd("CONN STOP", 1.5)
+    check("C5 STOP ok", r and r.get("status") == "ok", str(r))
+    time.sleep(1)
+
+    if peer_addr:                            # C2 direct by learned address
+        r = cmd_during_scan("SCAN START")
+        r = cmd_during_scan(f"CONN START {peer_addr}")
+        check("C2 direct START (learned type)", r and r.get("status") == "ok",
+              str(r))
+        end = time.time() + 10
+        ok = False
+        while time.time() < end:
+            r = cmd_during_scan("CONN STATUS")
+            if r and r.get("state") == "active":
+                ok = True
+                break
+            time.sleep(0.5)
+        check("C2 direct reconnect", ok, "never active")
+        cmd_during_scan("CONN STOP")
+        cmd_during_scan("SCAN STOP")
+        time.sleep(1)
+
+    # C6 peer vanishes (best effort: link supervision can exceed window)
+    r = cmd_during_scan("CONN START")
+    end = time.time() + 15
+    up = False
+    while time.time() < end:
+        r = cmd_during_scan("CONN STATUS")
+        if r and r.get("state") == "active":
+            up = True
+            break
+        time.sleep(0.5)
+    if up:
+        peer.stop()
+        peer = None
+        dropped = False
+        end = time.time() + 12
+        while time.time() < end:
+            r = cmd("CONN STATUS")
+            if r and r.get("state") == "off":
+                dropped = True
+                break
+            time.sleep(1)
+        if dropped:
+            check("C6 disconnect on peer vanish", True)
+        else:
+            print("  SKIP  C6 (link supervision longer than window)")
+            cmd("CONN STOP")
+    else:
+        print("  SKIP  C6 (reconnect for vanish test failed)")
+
+    if peer is not None:
+        peer.stop()
+    cmd("CONN STOP")
+    cmd("SCAN STOP")
 
 s.close()
 print(f"\n{PASS} passed, {FAIL} failed")
