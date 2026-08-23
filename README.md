@@ -18,10 +18,11 @@ analysis loop.
   `test_ble_peer_hw.py` **11/11** · `test_ble_conn_hw.py` (F2.4 C0)
   **29/29** — GATT data path C1–C6 ported as a WinRT GATT-server tier
   (skips where WinRT is unavailable; a real peer remains the follow-up)
-- **F2.4 optional BLE connection (GATT client)** — implemented on branch
-  `ble_connected_zai` (spec: `harness/01-features/stage2-ble-core/feature_ble_conn.md`):
+- **F2.4 optional BLE connection (GATT client)** — implemented and merged
+  (spec: `harness/01-features/stage2-ble-core/feature_ble_conn.md`):
   `CONFIG_BLE_CONN_ENABLED` build flag + `CONN` command family; conn lines
-  stream as `"src":"conn"` on the same JSON stream
+  stream as `"src":"conn"` on the same JSON stream (reference variant A
+  preserved on branch `ble_connected`)
 
 ## Architecture
 
@@ -67,7 +68,67 @@ attach to one peer and re-stream its notifications as `"src":"conn"` lines.
 | Lua | `lua` | Lua 5.4 on a static pool allocator, whitelist sandbox, hooks; script upload/run/stop |
 | CLI | `cli` | Command parser + IDLE/SCANNING/SCRIPT_RUNNING state machine |
 | Bridge | `bridge` | Text-line script upload with per-line sandbox scan |
-| Power | `power` | Automatic light sleep when idle, PM activity lock while scanning |
+| Power | `power` | Automatic light sleep when idle, PM activity lock while scanning or connected |
+
+### Layer model (dependency rules)
+
+```
+Layer 4: cli                                  user-facing commands
+Layer 3: scan_pipeline | ble_conn             orchestration / emission
+Layer 2: filter | json_enc | lua | storage    services
+Layer 1: ble_scan | usb | power               drivers / radio / PM
+Layer 0: interfaces/*_if.h (proto types)      shared types & contracts
+```
+
+Upper layers depend on lower layers only — no reverse dependencies; the
+CMake `REQUIRES` lists are the visible dependency graph. Cross-module data
+flows through `interfaces/` types only (`coding_rules.md` §5).
+
+### Threading model
+
+| Task | Prio | Job |
+|------|:----:|-----|
+| NimBLE host | stack | GAP/GATT callbacks — scan callback *copies only*, conn callbacks *enqueue only* (radio never blocks) |
+| pipeline | 2 | drains raw-ADV queue (32 deep, drops counted): parse → filter → Lua hooks → encode → USB |
+| cli | 5 | reads USB lines, dispatches commands, owns the CLI state machine |
+| ble_conn worker | 2 | drains conn payload queue (8 deep, drop-newest; notices evict-oldest); runs peer search/discovery/connect |
+
+All USB output serializes on one TX mutex (100 ms take timeout) so lines
+never interleave. Protection primitives: dedup spinlock, `lua_State`
+mutex, filter-engine mutex, conn mutex + atomic state, and one
+`NO_LIGHT_SLEEP` `esp_pm` lock shared by the scan and conn holders.
+
+### Contracts at a glance
+
+- **JSON line contract** — every machine-readable output is one ≤512 B
+  JSON object per line; adv lines carry `ts/addr/type/rssi/name/uuids/manu/…`,
+  conn lines add `"src":"conn"`. Host tools classify by key, not by order.
+- **Error ranges** — each module owns a 100-wide negative range
+  (`coding_rules.md` §1): ADV -1xx, JSON -2xx, FILTER -3xx, BLE -4xx
+  (conn: named `BLE_CONN_ERR_*`, -450…-459), USB -5xx, LUA -6xx, FS -7xx,
+  PIPE -8xx, CLI -9xx — parallel authors can't collide on codes.
+- **Buffer table** — fixed sizes declared in the interface headers
+  (USB RX 256 B, USB TX / JSON line 512 B, ADV raw 62 B, name 32 B,
+  ≤16 filter rules); hot path is zero-malloc.
+- **Byte order** — UUIDs, manufacturer IDs and MACs are big-endian hex
+  strings everywhere (`"180A"`, `"004C"`, `"AA:BB:CC:DD:EE:FF"`).
+
+### Memory model
+
+Static allocation by rule: Lua runs on a 128 KB static pool
+(`lua_pool.c` — 32-bit offsets, on-free coalescing, top-block shrink),
+queues and line buffers are static, the encoder writes into a
+pipeline-owned 512 B buffer; heap is left to libraries (cJSON, LittleFS,
+NimBLE). `STATUS` exposes `free_heap` and `lua_pool{used,peak}` so pool
+pressure is field-observable.
+
+### Feature flags
+
+| Flag | Where | Effect |
+|------|-------|--------|
+| `CONFIG_BLE_CONN_ENABLED` | `firmware/components/ble/Kconfig.projbuild` | compiles the F2.4 GATT client and selects `BT_NIMBLE_ROLE_CENTRAL`; off-build behaves like v1.0.0 |
+| `CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1` | `sdkconfig.defaults` | one connection by design |
+| `LUA_SOURCE` (CMake cache var) | `ble` component | conditional-dependency switch for the Lua implementation |
 
 ### Design highlights
 
@@ -98,13 +159,30 @@ attach to one peer and re-stream its notifications as `"src":"conn"` lines.
 firmware/components/   ESP-IDF components (one per module above)
 interfaces/            Public C headers (*_if.h) — the only cross-module surface
 main/                  app_main: init chain + USB command loop
-tests/host/            Unity host tests (MinGW, no ESP-IDF needed)
-harness/00-global-context/  product overview, coding rules, build env, git workflow
-harness/01-features/   per-feature specs for all 13 implemented features
-harness/02-future/     v2+ spec space (empty)
+tests/host/            Unity host tests (no ESP-IDF needed) + third_party/unity
+tests/harness/         (historical) on-target test sources, superseded by
+                       tests/host + the root HIL suites
+harness/00-global-context/  product overview, coding rules, build env, git workflow,
+                       architecture patterns & feature-patch guide
+harness/01-features/   per-feature specs (13 v1 features + F2.4 + stage5-host tool)
+harness/02-future/     v2+ spec space / promoted-feature notes
 bug_check/             evaluations + fix reports (index: bug_check/README.md)
 status/                session handoff reports (pointer: status/LATEST.md)
-docs/archive/          historical plan/design documents
+docs/                  proposals, reviews, evaluation responses, templates,
+                       example LLM-generated Lua; docs/archive/ = history
+.githooks/             commit-msg hook enforcing the 4-section standard
+.qwen/                 local agent settings (gitignored): SessionStart hook
+
+CMakeLists.txt         ESP-IDF project root (top-level)
+sdkconfig.defaults     NimBLE observer+central roles, PM, console settings
+partitions.csv         NVS / LittleFS / factory / storage layout
+
+build.bat / flash.bat / monitor.bat    build · flash COM12 · console
+dev_env.bat            idempotent tmux `esp32` build pane (WSL)
+send_cmd.bat / h.bat   one-line command senders for manual sessions
+llm_loop.py            host LLM loop (capture/analyze/deploy/loop, --dry-run)
+.llm_env               gitignored LLM credentials (KEY=value, local only)
+
 test_bridge_hw.py      F4.1+F4.2 hardware suite (32 checks, pyserial on COM12)
 test_power_hw.py       F4.3 hardware suite (14 checks)
 test_ble_lua_hw.py     BLE+Lua data-plane suite (45 checks, keeps port open)
@@ -124,6 +202,11 @@ soak_test.py           2 h H4 soak: scan + fragmenting transform + STATUS sampli
 set PATH=C:\msys64\mingw64\bin;%PATH%
 cmake -G "MinGW Makefiles" -S tests\host -B tests\host\build
 cmake --build tests\host\build && tests\host\build\test_runner.exe
+
+:: Host tests fallback: if cmake/MinGW fails on your box (the msys64 gcc
+:: dies silently on this one), compile the suite directly with any gcc —
+:: WSL Ubuntu works:
+wsl -d Ubuntu -- bash -lc "cd /mnt/e/agent/esp32_lua_llm/tests/host && gcc -Wall -Wextra -Werror -DHOST_BUILD -I ../../interfaces -I ../third_party/unity/src -I . -I ../../firmware/components/proto -I ../../firmware/components/json_enc -I ../../firmware/components/filter -I ../../firmware/components/cli -I ../../firmware/components/bridge test_main.c test_adv_parser.c test_json_encoder.c test_filter_engine.c test_cli.c test_bridge.c test_lua_pool.c test_ble_conn.c ../../firmware/components/proto/proto_adv_parse.c ../../firmware/components/json_enc/json_encoder.c ../../firmware/components/filter/filter_engine.c ../../firmware/components/cli/cli_commands.c ../../firmware/components/bridge/lua_llm_bridge.c ../../firmware/components/lua/lua_pool.c test_stubs.c ../third_party/unity/src/unity.c -o /tmp/test_runner && /tmp/test_runner"
 
 :: Firmware (ESP-IDF v5.1)
 build.bat              :: full build
@@ -177,6 +260,80 @@ git config core.hooksPath .githooks
 ```
 
 Genuine exceptions bypass with `git commit --no-verify`.
+
+## How to use (guided tour)
+
+### Prerequisites
+
+- ESP-IDF **v5.1** (`C:\Espressif`); the `.bat` wrappers activate it
+- Python 3 + `pyserial` (all suites); `winrt-*` packages for the
+  controlled-peer and conn GATT tiers; a Windows BT adapter for WinRT
+- Dongle on **COM12** (USB-Serial/JTAG, 115200)
+
+### First five minutes
+
+1. `build.bat` → `flash.bat` → `monitor.bat` (or PuTTY: serial 115200 with
+   *Implicit CR in every LF* enabled for clean echoing).
+2. `STATUS` → `{"status":"ok",…,"state":"idle",…}`.
+3. `SCAN START` → advertisements stream as JSON lines; watch `ts` advance.
+4. `Ctrl+C` (no Enter) → scan stops instantly; `POWER STATUS` shows the
+   sleep estimate once idle.
+
+### Filter and script by hand
+
+```
+FILTER ADD NAME Sensor_*      :: wildcard name rule
+FILTER ADD RSSI -70           :: AND-combined with the name rule
+SCAN START                    :: only matching devices stream now
+FILTER LIST / FILTER CLEAR
+
+SCRIPT LOAD                   :: paste Lua lines, finish with SCRIPT END
+SCRIPT RUN                    :: on_adv/transform hooks join the pipeline
+SCRIPT STOP
+```
+
+Rules: AND between filter types, OR within a type, ≤16 rules, empty set
+passes all. Lua hooks get `on_adv(addr, addr_type, rssi, name, uuids,
+manu_id, manu_data) -> bool` and `transform(addr, json_string) -> string`;
+sandbox is whitelist-only (`string/table/math/utf8`).
+
+### Connect to a device (F2.4, optional build)
+
+```
+CONN TARGET 12345678-1234-1234-1234-123456789abc [char-uuid]
+CONN START                          :: auto-connect by advertised service UUID
+CONN START AA:BB:CC:DD:EE:FF random :: or direct, with address type
+CONN STATUS                         :: state/addr/mode/counters/mtu
+CONN INTERVAL 500                   :: poll-fallback period (100..10000)
+CONN STOP
+```
+
+Notifications (or polls) of the target characteristic re-stream as
+`"src":"conn"` lines on the same USB stream; envelope keys (`ts/addr/src`)
+win on payload collisions, oversized payloads are wrapped with
+`"trunc":true`. A phone running nRF Connect as a GATT server is the
+quickest manual peer (runbook in
+`harness/01-features/stage2-ble-core/feature_ble_conn.md`).
+
+### The LLM loop (one command)
+
+```
+python llm_loop.py COM12 loop --secs 8 --goal "keep only my Sensor_* devices"
+```
+
+capture → LLM writes Lua → `SCRIPT LOAD` deploy → verify the cleaned
+stream. `--dry-run` needs no API key; credentials live in `.llm_env`
+(gitignored). See *Host tooling* below for the subcommands.
+
+### Troubleshooting
+
+| Symptom | Cause / fix |
+|---------|-------------|
+| Chip reboots when the terminal closes | N3: closing COM12 resets the chip (`ESP_RST_USB`). Keep the port open; `STATUS` `reset_reason` 11 confirms |
+| `Could not open COM12` | another owner holds the port (PuTTY or a suite) — one program at a time |
+| Garbled echo in PuTTY | enable *Implicit CR in every LF* |
+| Host suite won't configure | MinGW broken on some boxes; compile `tests/host` directly with any gcc (WSL gcc works) |
+| `CONN START` times out with `-455` | peer out of range, or wrong address type — retry with `public`/`random` or use auto mode |
 
 ## Test strategy
 
@@ -270,6 +427,7 @@ end
 |------|-------|
 | Product spec & design | `harness/00-global-context/project_overview.md` (historical plan: `docs/archive/qwen_featuer.md`) |
 | Coding rules / error codes | `harness/00-global-context/coding_rules.md` |
+| Architecture patterns & feature-patch guide | `harness/00-global-context/architecture_patterns.md` |
 | Per-feature specs + acceptance criteria | `harness/01-features/` |
 | Current project status | `status/LATEST.md` |
 | Bug history & deferred items | `bug_check/README.md` |
