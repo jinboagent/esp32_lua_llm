@@ -17,4 +17,12 @@
 - **Also in this branch**: architecture-pattern guide
   (`harness/00-global-context/architecture_patterns.md`), both review
   docs, proposal data-flow update
-- **Next:** push when permitted; manual runbook; optional re-soak
+- **Cross-branch (2026-08-22/23):** the variant-A author's evaluation and
+  the improvement pass (merge of A's strengths + B-nit fixes + C1–C6 port)
+  live on `ble_connected_zai` (`ce3baef`, `f50d5e3`); this branch keeps
+  variant A as-is for reference
+- **Decided (2026-08-23):** `ble_connected_zai` (improved variant) is the
+  F2.4 product line — merge it forward when AC-9/push are settled;
+  `ble_connected` stays as the reference variant
+- **Next:** push when permitted; manual nRF Connect runbook; re-soak
+  stays deferred
