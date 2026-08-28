@@ -13,9 +13,9 @@ analysis loop.
   H2 (overlong-line drain) / H3 (chunk-limit doc) fixed; H4 (Lua pool
   fragmentation) instrumented (`free_heap` + `lua_pool` in STATUS) with a
   2 h soak running (see `bug_check/README.md`)
-- Verification on COM12 hardware: host tests **108/108** · `test_bridge_hw.py`
-  **32/32** · `test_power_hw.py` **14/14** · `test_ble_lua_hw.py` **45/45** ·
-  `test_ble_peer_hw.py` **11/11** · `test_ble_conn_hw.py` (F2.4 C0)
+- Verification on COM12 hardware: host tests **108/108** · `tests/hw/test_bridge_hw.py`
+  **32/32** · `tests/hw/test_power_hw.py` **14/14** · `tests/hw/test_ble_lua_hw.py` **45/45** ·
+  `tests/hw/test_ble_peer_hw.py` **11/11** · `tests/hw/test_ble_conn_hw.py` (F2.4 C0)
   **29/29** — GATT data path C1–C6 ported as a WinRT GATT-server tier
   (skips where WinRT is unavailable; a real peer remains the follow-up)
 - **F2.4 optional BLE connection (GATT client)** — implemented and merged
@@ -177,22 +177,22 @@ CMakeLists.txt         ESP-IDF project root (top-level)
 sdkconfig.defaults     NimBLE observer+central roles, PM, console settings
 partitions.csv         NVS / LittleFS / factory / storage layout
 
-build.bat / flash.bat / monitor.bat    build · flash COM12 · console
-dev_env.bat            idempotent tmux `esp32` build pane (WSL)
-send_cmd.bat / h.bat   one-line command senders for manual sessions
+scripts/build.bat / flash.bat / monitor.bat  build · flash COM12 · console
+scripts/dev_env.bat      idempotent tmux `esp32` build pane (WSL)
+scripts/send_cmd.bat / h.bat  one-line command senders for manual sessions
 llm_loop.py            host LLM loop (capture/analyze/deploy/loop, --dry-run)
 .llm_env               gitignored LLM credentials (KEY=value, local only)
 
-test_bridge_hw.py      F4.1+F4.2 hardware suite (32 checks, pyserial on COM12)
-test_power_hw.py       F4.3 hardware suite (14 checks)
-test_ble_lua_hw.py     BLE+Lua data-plane suite (45 checks, keeps port open)
-test_ble_peer_hw.py    controlled BLE peer suite (11 checks, bleak + WinRT)
-test_ble_conn_hw.py    F2.4 conn suite: C0 control plane (29) + C1-C6 WinRT
+tests/hw/test_bridge_hw.py  F4.1+F4.2 hardware suite (32 checks, pyserial on COM12)
+tests/hw/test_power_hw.py   F4.3 hardware suite (14 checks)
+tests/hw/test_ble_lua_hw.py BLE+Lua data-plane suite (45 checks, keeps port open)
+tests/hw/test_ble_peer_hw.py controlled BLE peer suite (11 checks, bleak + WinRT)
+tests/hw/test_ble_conn_hw.py F2.4 conn suite: C0 control plane (29) + C1-C6 WinRT
                        GATT-server tier (skips when the API is unavailable)
-putty_sim_test.py      interactive-session simulation (CR endings, Ctrl+C)
-cr_lf_test.py          line-terminator contract (CR / LF / CRLF)
-capture_25s.py         25 s continuous-scan window check
-soak_test.py           2 h H4 soak: scan + fragmenting transform + STATUS sampling
+tests/hw/putty_sim_test.py  interactive-session simulation (CR endings, Ctrl+C)
+tests/hw/cr_lf_test.py    line-terminator contract (CR / LF / CRLF)
+tests/hw/capture_25s.py   25 s continuous-scan window check
+tests/hw/soak_test.py     2 h H4 soak: scan + fragmenting transform + STATUS sampling
 ```
 
 ## Build & test
@@ -209,16 +209,16 @@ cmake --build tests\host\build && tests\host\build\test_runner.exe
 wsl -d Ubuntu -- bash -lc "cd /mnt/e/agent/esp32_lua_llm/tests/host && gcc -Wall -Wextra -Werror -DHOST_BUILD -I ../../interfaces -I ../third_party/unity/src -I . -I ../../firmware/components/proto -I ../../firmware/components/json_enc -I ../../firmware/components/filter -I ../../firmware/components/cli -I ../../firmware/components/bridge test_main.c test_adv_parser.c test_json_encoder.c test_filter_engine.c test_cli.c test_bridge.c test_lua_pool.c test_ble_conn.c ../../firmware/components/proto/proto_adv_parse.c ../../firmware/components/json_enc/json_encoder.c ../../firmware/components/filter/filter_engine.c ../../firmware/components/cli/cli_commands.c ../../firmware/components/bridge/lua_llm_bridge.c ../../firmware/components/lua/lua_pool.c test_stubs.c ../third_party/unity/src/unity.c -o /tmp/test_runner && /tmp/test_runner"
 
 :: Firmware (ESP-IDF v5.1)
-build.bat              :: full build
-flash.bat              :: flash COM12
-monitor.bat            :: USB-Serial/JTAG console
+scripts/build.bat        :: full build
+scripts/flash.bat        :: flash COM12
+scripts/monitor.bat      :: USB-Serial/JTAG console
 
 :: Hardware suites (device attached on COM12)
-python test_bridge_hw.py
-python test_power_hw.py
-python test_ble_lua_hw.py COM12      :: BLE+Lua data plane (~90 s)
-python test_ble_peer_hw.py COM12     :: controlled BLE peer, needs bleak+winrt (~60 s)
-python test_ble_conn_hw.py           :: F2.4 CONN C0 + C1-C6 GATT tier (~60-120 s)
+python tests/hw/test_bridge_hw.py
+python tests/hw/test_power_hw.py
+python tests/hw/test_ble_lua_hw.py COM12      :: BLE+Lua data plane (~90 s)
+python tests/hw/test_ble_peer_hw.py COM12     :: controlled BLE peer, needs bleak+winrt (~60 s)
+python tests/hw/test_ble_conn_hw.py           :: F2.4 CONN C0 + C1-C6 GATT tier (~60-120 s)
 
 :: Feature-off build proof (F2.4): separate config + build dir
 :: (copy sdkconfig to sdkconfig.off, unset BLE_CONN_ENABLED and
@@ -232,13 +232,13 @@ Note: after changing `sdkconfig.defaults`, delete `sdkconfig` and `build/` for a
 
 Builds/flashes run in a dedicated tmux pane (WSL tmux, session `esp32`) so
 long output streams in its own window instead of flooding the console/agent
-context. `dev_env.bat` creates the pane idempotently and is wired to run
+context. `scripts/dev_env.bat` creates the pane idempotently and is wired to run
 automatically at Qwen Code session start (`.qwen/settings.json`
-SessionStart hook; run `dev_env.bat` by hand otherwise).
+SessionStart hook; run `scripts/dev_env.bat` by hand otherwise).
 
 ```bat
 :: send a build into the pane with a sentinel, then poll for the sentinel
-wsl -d Ubuntu tmux send-keys -t esp32:0.0 "cmd.exe /c \"build.bat > build_check.txt 2>&1 && echo BUILD_OK || echo BUILD_FAILED\"; echo SENTINEL" Enter
+wsl -d Ubuntu tmux send-keys -t esp32:0.0 "cmd.exe /c \"scripts/build.bat > build_check.txt 2>&1 && echo BUILD_OK || echo BUILD_FAILED\"; echo SENTINEL" Enter
 :: watch it live:  wsl -d Ubuntu tmux attach -t esp32   (detach: Ctrl-b d)
 ```
 
@@ -265,14 +265,14 @@ Genuine exceptions bypass with `git commit --no-verify`.
 
 ### Prerequisites
 
-- ESP-IDF **v5.1** (`C:\Espressif`); the `.bat` wrappers activate it
+- ESP-IDF **v5.1** (`C:\Espressif`); the `scripts/*.bat` wrappers activate it
 - Python 3 + `pyserial` (all suites); `winrt-*` packages for the
   controlled-peer and conn GATT tiers; a Windows BT adapter for WinRT
 - Dongle on **COM12** (USB-Serial/JTAG, 115200)
 
 ### First five minutes
 
-1. `build.bat` → `flash.bat` → `monitor.bat` (or PuTTY: serial 115200 with
+1. `scripts/build.bat` → `scripts/flash.bat` → `scripts/monitor.bat` (or PuTTY: serial 115200 with
    *Implicit CR in every LF* enabled for clean echoing).
 2. `STATUS` → `{"status":"ok",…,"state":"idle",…}`.
 3. `SCAN START` → advertisements stream as JSON lines; watch `ts` advance.
@@ -343,9 +343,9 @@ COM12 (one program owns the port at a time).
 | Layer | Tool | Covers | Checks |
 |-------|------|--------|:------:|
 | Host unit | Unity + MinGW, `tests/host` (stubs for ble/lua/storage/power/conn) | AD parser, JSON encoder + escaping + conn line model, filter logic, CLI state machine, bridge protocol, pool allocator | 108 |
-| HW command plane | `test_bridge_hw.py`, `test_power_hw.py`, `test_ble_conn_hw.py` (C0 + C1–C6 GATT tier) | CLI/bridge/state guards/sandbox on device, PM behavior, CONN command family + error codes + Ctrl+C recovery + scan coexistence; GATT data path via WinRT server when available | 32 + 14 + 29 |
-| HW data plane | `test_ble_lua_hw.py` (ambient RF), `test_ble_peer_hw.py` (PC advertises via WinRT as a controlled peer) | JSON schema / ts monotonicity / dedup invariants, 7-arg hook ABI, suppression + transform on the live stream, v1 non-connectability | 45 + 11 |
-| Interactive & soak | `putty_sim_test.py`, `cr_lf_test.py`, `capture_25s.py`, `soak_test.py` | terminal contract (CR/LF/Ctrl+C), continuous-scan windows, 2 h pool-fragmentation soak with `free_heap`/`lua_pool` sampling | — |
+| HW command plane | `tests/hw/test_bridge_hw.py`, `tests/hw/test_power_hw.py`, `tests/hw/test_ble_conn_hw.py` (C0 + C1–C6 GATT tier) | CLI/bridge/state guards/sandbox on device, PM behavior, CONN command family + error codes + Ctrl+C recovery + scan coexistence; GATT data path via WinRT server when available | 32 + 14 + 29 |
+| HW data plane | `tests/hw/test_ble_lua_hw.py` (ambient RF), `tests/hw/test_ble_peer_hw.py` (PC advertises via WinRT as a controlled peer) | JSON schema / ts monotonicity / dedup invariants, 7-arg hook ABI, suppression + transform on the live stream, v1 non-connectability | 45 + 11 |
+| Interactive & soak | `tests/hw/putty_sim_test.py`, `tests/hw/cr_lf_test.py`, `tests/hw/capture_25s.py`, `tests/hw/soak_test.py` | terminal contract (CR/LF/Ctrl+C), continuous-scan windows, 2 h pool-fragmentation soak with `free_heap`/`lua_pool` sampling | — |
 | LLM loop (host) | `llm_loop.py` | the product loop end-to-end: capture → LLM-generated Lua → deploy → verify; `--dry-run` exercises the mechanics with no API key | — |
 
 Principles (each learned from a real miss):

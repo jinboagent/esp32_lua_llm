@@ -28,9 +28,9 @@ ESP32-S3 passive BLE advertisement scanner → AD parse → C filters → option
 cmake --build tests/host/build && tests/host/build/test_runner.exe
 
 # ESP32
-build.bat && flash.bat        (or idf.py build / flash / monitor)
-python test_bridge_hw.py      # F4.1+F4.2 hardware suite
-python test_power_hw.py       # F4.3 hardware suite
+scripts/build.bat && scripts/flash.bat        (or idf.py build / flash / monitor)
+python tests/hw/test_bridge_hw.py      # F4.1+F4.2 hardware suite
+python tests/hw/test_power_hw.py       # F4.3 hardware suite
 ```
 
 ## Key Files
