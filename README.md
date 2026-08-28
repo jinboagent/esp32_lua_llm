@@ -323,7 +323,10 @@ python llm_loop.py COM12 loop --secs 8 --goal "keep only my Sensor_* devices"
 
 capture → LLM writes Lua → `SCRIPT LOAD` deploy → verify the cleaned
 stream. `--dry-run` needs no API key; credentials live in `.llm_env`
-(gitignored). See *Host tooling* below for the subcommands.
+(gitignored). See *Host tooling* below for the subcommands. For a
+conversation instead of a one-shot, run
+`python host_app/assistant.py COM12` — ask questions about the live
+data, answer the LLM's clarifying questions, confirm deploys by hand.
 
 ### Troubleshooting
 
@@ -405,6 +408,33 @@ plane only under `--with-scan`. LLM credentials for the `--estimate`
 act resolve from `.llm_env` (legacy `LLM_*` triple or provider pairs
 `DASHSCOPE_*`/`TOKEN_PLAN_*` with `QWEN_MODEL`) or from the
 environment as a unit.
+
+## Host tooling: `host_app/assistant.py` (the interactive session, H5.3)
+
+A conversational counterpart to the one-shot loop: you chat with the LLM
+while the dongle keeps streaming (spec:
+`harness/01-features/stage5-host/feature_assistant_session.md`). A
+message-Prompt loop drains the device while you type, so every turn
+carries a fresh snapshot of both data planes. The LLM replies in a
+typed envelope — `answer`, `clarify` (it asks *you* a question),
+`error`, or `lua`, and a Lua artifact is deployed only after you answer
+`deploy? [y/N]` with `y`; the device sandbox scan stays the final gate.
+
+```bash
+python host_app/assistant.py COM12          # interactive (needs .llm_env)
+python host_app/assistant.py COM12 --no-llm # session shell without any network
+python host_app/assistant.py COM12 --system-extra my_rules.txt   # your steering text
+```
+
+Session commands: `/samples [n]`, `/scan on|off`, `/conn on|off|status`,
+`/deploy` (re-offer the last artifact), `/history`, `/quit`; Ctrl+C
+stops script/scan/conn and exits cleanly. Every run is tee'd to
+`assistant_<timestamp>.log` in the working directory. LLM credentials
+resolve as a unit: real env vars win as a group, otherwise `.llm_env`
+(next to the script or repo root) is used as-is — a foreign provider's
+key in your shell env never mixes with the file's base URL; a rejected
+shell key (401) falls back to the file automatically, and a base ending
+`/api/v1` self-heals to the OpenAI-compatible `/compatible-mode/v1`.
 
 ## Usage quick reference
 

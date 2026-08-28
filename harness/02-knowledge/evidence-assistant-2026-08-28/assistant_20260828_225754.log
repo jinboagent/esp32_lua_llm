@@ -1,0 +1,37 @@
+=== assistant session (2026-08-28 22:57) ===
+llm backend: qwen3.8-flash
+system prompt: built-in
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_225754.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+device: idle  (/scan on to start)
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+type /help for commands; /quit exits
+you: can you tell me teh tim      he time in china right now 
+(asking qwen3.8-flash - buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+llm (error): request failed: LLM HTTP 401: {
+  "error": {
+    "message": "Incorrect API key provided: sk-b50a6***********************bbda. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+you: hello
+(asking qwen3.8-flash - buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+llm (error): request failed: LLM HTTP 401: {
+  "error": {
+    "message": "Incorrect API key provided: sk-b50a6***********************bbda. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+you: 4 (exit - cleaning up)
+  (script_stop: {"status":"error","cmd":"script_stop","code":-911,"msg":"invalid state: no script running"})
+  (scan_stop: {"status":"error","cmd":"scan_stop","msg":"not scanning"})
+  (conn_stop: {"status":"error","cmd":"conn_stop","code":-453})
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_225754.log

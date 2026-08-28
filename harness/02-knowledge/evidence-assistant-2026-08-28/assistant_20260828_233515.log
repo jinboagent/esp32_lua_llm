@@ -1,0 +1,19 @@
+=== assistant session (2026-08-28 23:35) ===
+llm backend: qwen3.8-27b  (config: environment variables (unset LLM_API_KEY to use .llm_env))
+system prompt: built-in
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_233515.log
+(no device on COM12: could not open port 'COM12': PermissionError(13, 'Access is denied.', None, 5))
+(running without live data; /scan /conn /deploy are disabled)
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+type /help for commands; /quit exits
+you: /scan on
+(no device)
+you: hello - one sentence on what you can do here
+(asking qwen3.8-27b - buffer: 0 adv lines (0 addresses), 0 conn lines, 0 invalid dropped)
+(llm key from the shell environment was rejected (401) - switching to .llm_env [qwen3.8-27b])
+llm: I can help interpret the sniffer's JSON lines and, for advertisement-plane questions, provide small Lua 5.4 filter/transform scripts.
+you: /quit
+(exit - cleaning up)
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_233515.log

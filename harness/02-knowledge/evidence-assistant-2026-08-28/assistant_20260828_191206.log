@@ -1,0 +1,35 @@
+=== assistant session (2026-08-28 19:12) ===
+llm backend: glm-5.2
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_191206.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+device: idle  (/scan on to start)
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+type /help for commands; /quit exits
+you: /scan on
+(scan started; collecting 5s of advertisements)
+(buffer: 50 adv lines (19 addresses), 0 conn lines, 9 invalid dropped)
+you: write a Lua filter that keeps only devices whose rssi is -60 dBm or stronger
+(asking glm-5.2 - buffer: 58 adv lines (19 addresses), 0 conn lines, 9 invalid dropped)
+llm proposes Lua - Keeps only advertisements with RSSI ≥ -60 dBm (stronger signals).
+--- lua code ---
+  -- Keep only devices with RSSI >= -60 dBm
+  function on_adv(addr, addr_type, rssi, name, uuids, manu_id, manu_data)
+    return rssi >= -60
+  end
+--- end ---
+deploy? [y/N]
+  confirm> y
+(script running - 5s of the filtered stream)
+(4 lines observed; buffer: 60 adv lines (20 addresses), 0 conn lines, 20 invalid dropped)
+(stop it any time with Ctrl+C or /scan off cleanup)
+you: Connection lines on this device carry src":"conn" with the peer payload merged in. If I later connect to a sensor and collect conn lines, can you write me a Lua transform script that reformats those conn lines to be more compact?
+(asking glm-5.2 - buffer: 60 adv lines (20 addresses), 0 conn lines, 20 invalid dropped)
+llm: No — connection lines bypass the Lua sandbox entirely. The on_adv and transform hooks are only invoked on the advertisement plane. Conn lines (those carrying "src":"conn") are analysis-only and cannot be intercepted or reformatted by a Lua script on this device.
+you: /quit
+(exit - cleaning up)
+  (script_stop ok)
+  (scan_stop ok)
+  (conn_stop: {"status":"error","cmd":"conn_stop","code":-453})
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_191206.log

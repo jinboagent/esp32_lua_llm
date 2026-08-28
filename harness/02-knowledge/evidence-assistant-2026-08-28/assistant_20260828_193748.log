@@ -1,0 +1,23 @@
+=== assistant session (2026-08-28 19:37) ===
+llm backend: glm-5.2
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_193748.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+device: idle  (/scan on to start)
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+type /help for commands; /quit exits
+you: /scan on
+(scan started; collecting 5s of advertisements)
+(buffer: 49 adv lines (16 addresses), 0 conn lines, 9 invalid dropped)
+you: which two devices in this buffer have the strongest signal?
+(asking glm-5.2 - buffer: 57 adv lines (17 addresses), 0 conn lines, 9 invalid dropped)
+llm: The two strongest signals are:
+1. FD:AF:EA:7D:EF:14 (random) — RSSI -60 dBm
+2. 40:F0:BB:4D:BA:59 (random) — RSSI -70 dBm
+you: /quit
+(exit - cleaning up)
+  (script_stop: {"status":"error","cmd":"script_stop","code":-911,"msg":"invalid state: no script running"})
+  (scan_stop ok)
+  (conn_stop: {"status":"error","cmd":"conn_stop","code":-453})
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_193748.log

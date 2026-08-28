@@ -1,0 +1,26 @@
+=== assistant session (2026-08-28 19:03) ===
+llm backend: glm-5.2
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_190357.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+device: idle  (/scan on to start)
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+type /help for commands; /quit exits
+you: /scan on
+(scan started; collecting 5s of advertisements)
+(buffer: 43 adv lines (15 addresses), 0 conn lines, 9 invalid dropped)
+you: filter these devices somehow to reduce the noise
+(asking glm-5.2 - buffer: 50 adv lines (15 addresses), 0 conn lines, 9 invalid dropped)
+llm (error): request failed: LLM HTTP 401: {"error":{"message":"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error","type":"invalid_request_error","param":null,"code":"invalid_api_key"},"request_id":"81218772-dab3-989f-8118-7a2a18a5b427"}
+you: by noise I mean the Apple devices only; keep everything else visible
+(asking glm-5.2 - buffer: 60 adv lines (17 addresses), 0 conn lines, 9 invalid dropped)
+llm (error): request failed: LLM HTTP 401: {"error":{"message":"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error","type":"invalid_request_error","param":null,"code":"invalid_api_key"},"request_id":"2694635e-10be-95a9-bef6-3175fd7fbfaf"}
+you: /history
+(no conversation yet)
+you: /quit
+(exit - cleaning up)
+  (script_stop: {"status":"error","cmd":"script_stop","code":-911,"msg":"invalid state: no script running"})
+  (scan_stop ok)
+  (conn_stop: {"status":"error","cmd":"conn_stop","code":-453})
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_190357.log

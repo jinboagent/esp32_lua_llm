@@ -1,0 +1,28 @@
+# Live probe — device -612 sandbox gate through the assistant's upload path
+# Date: 2026-08-28, dongle on COM12, via assistant.upload_script (the exact
+# function a confirmed "y" deploy calls). The LLM had refused to emit a
+# forbidden script (see assistant_20260828_190900.log), so the device gate is
+# exercised directly.
+
+script uploaded:
+    -- deliberate forbidden-token script (sandbox rejection test)
+    function on_adv(addr, addr_type, rssi, name, uuids, manu_id, manu_data)
+        local t = os.time()
+        return rssi >= -65
+    end
+
+run 1 (before the mid-upload-rejection fix — SCRIPT END against an already-reset session):
+    SCRIPT LOAD -> {'status': 'ok', 'cmd': 'script_load', 'msg': 'ready'}
+    SCRIPT END  -> {'status': 'error', 'cmd': 'script_end', 'code': -611}
+    (the true -612 had been emitted per-line and discarded; this is the
+     misleading report the fix removes)
+
+run 2 (after the fix — the send loop catches the per-line rejection):
+    upload ok: False
+    assistant reports: (deploy rejected by the device: {"status":"error","cmd":"script_data","code":-612,"msg":"sandbox violation: 'os.' is not allowed"})
+    device still alive -> {'status': 'ok', 'scanning': False}
+
+conclusion: the fail-closed per-line scan in lua_llm_bridge.c rejects the
+offending line with -612 and resets the upload session; the assistant
+surfaces the real reason, aborts before SCRIPT END, and the session/device
+continue normally.

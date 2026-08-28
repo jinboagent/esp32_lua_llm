@@ -1,0 +1,27 @@
+=== assistant session (2026-08-28 19:17) ===
+llm backend: none (--no-llm or no key)
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_191732.log
+(no device on COM99: could not open port 'COM99': FileNotFoundError(2, 'The system cannot find the file specified.', None, 2))
+(running without live data; /scan /conn /deploy are disabled)
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+(--no-llm mode: prompts stay local; free text will not reach any cloud service)
+type /help for commands; /quit exits
+you: /help
+commands:
+  /samples [n]     show the device buffer snapshot (default 10 lines)
+  /scan on|off     start/stop the advertisement plane (SCAN START/STOP)
+  /conn on [addr [public|random]]   start conn plane (CONN START)
+  /conn off        stop the conn plane (CONN STOP)
+  /conn status     connection state and counters (CONN STATUS)
+  /conn target <svc-uuid> [<chr-uuid>]   preset the auto-connect target
+  /deploy          re-offer the last Lua artifact
+  /history         conversation summary
+  /help            this text
+  /quit            cleanup and exit (Ctrl+C does the same)
+anything else is a prompt for the LLM. Typing while a turn is in flight
+is buffered and echoed when the turn finishes.
+you: /quit
+(exit - cleaning up)
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_191732.log

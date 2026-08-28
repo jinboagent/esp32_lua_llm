@@ -1,0 +1,19 @@
+=== assistant session (2026-08-28 23:35) ===
+llm backend: qwen3.8-27b  (config: environment variables (unset LLM_API_KEY to use .llm_env))
+system prompt: built-in
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_233511.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+device: idle  (/scan on to start)
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+type /help for commands; /quit exits
+you: hello
+(asking qwen3.8-27b - buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+(llm key from the shell environment was rejected (401) - switching to .llm_env [qwen3.8-27b])
+llm: Hello! I can help with BLE advertisement filtering or connection analysis.
+you: (exit - cleaning up)
+  (script_stop: {"status":"error","cmd":"script_stop","code":-911,"msg":"invalid state: no script running"})
+  (scan_stop: {"status":"error","cmd":"scan_stop","msg":"not scanning"})
+  (conn_stop: {"status":"error","cmd":"conn_stop","code":-453})
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_233511.log

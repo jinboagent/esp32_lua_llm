@@ -1,0 +1,22 @@
+=== assistant session (2026-08-28 22:55) ===
+llm backend: qwen3.8-flash
+system prompt: built-in + extra C:/Users/jinbo/AppData/Local/Temp/pilot_extra.txt
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_225506.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+device: idle  (/scan on to start)
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+type /help for commands; /quit exits
+you: /scan on
+(scan started; collecting 5s of advertisements)
+(buffer: 47 adv lines (16 addresses), 0 conn lines, 9 invalid dropped)
+you: summarize what kind of devices are around in one sentence
+(asking qwen3.8-flash - buffer: 53 adv lines (16 addresses), 0 conn lines, 9 invalid dropped)
+llm: [PILOT] The nearby devices appear to be mostly Apple and Android/Google Fast Pair Bluetooth LE accessories, including a Jabra Evolve2 65 headset.
+you: /quit
+(exit - cleaning up)
+  (script_stop: {"status":"error","cmd":"script_stop","code":-911,"msg":"invalid state: no script running"})
+  (scan_stop ok)
+  (conn_stop: {"status":"error","cmd":"conn_stop","code":-453})
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_225506.log

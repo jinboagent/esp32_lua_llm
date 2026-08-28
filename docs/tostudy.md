@@ -651,3 +651,50 @@ same host is `/compatible-mode/v1/chat/completions`.
 
 ### Resources
 - `.llm_env` (base URL), `host_app/assistant.py` (`resolve_llm_config`)
+## 17. C String Literals: Adjacent Concatenation and Escapes
+
+**Why:** Host tests in this repo assert exact JSON output from C code;
+reading those assertions (and writing them) requires fluency in how C
+handles string literals.
+
+**Context:** While reviewing the F2.4 merge-fix tests
+(`tests/host/test_ble_conn.c`), the question came up what
+`"{\"ts\":1,...\"src\":\"conn\","  "\"o\":{\"x\":1},...}"` means.
+
+### What you just learned
+- Two string literals separated only by whitespace are **concatenated
+  at compile time into one string** — C has no literal continuation
+  operator; you just close and reopen the quotes.
+- `\"` is an escaped double quote *inside* the string; the string's own
+  delimiters are the outermost `"`.
+- A trailing comma inside the literal (e.g. after `"src":"conn",`) is
+  JSON **content**, not C syntax — the real argument-separating comma
+  sits before the next C expression.
+- Where it's used: `TEST_ASSERT_EQUAL_STRING(expected, line)` compares
+  byte-for-byte, so these literals pin the exact JSON the encoder
+  emits (the 2026-08-28 merge-separator fix).
+
+## 18. Structured LLM Output: Typed JSON Envelopes and Escaping
+
+**Why:** The H5.3 assistant session asks a cloud LLM to reply in a
+typed JSON envelope; the single most likely failure is invalid JSON
+caused by Lua code inside a JSON string.
+
+**Context:** Implementing and verifying `host_app/assistant.py`
+(2026-08-28): the reply contract `{"type":"lua","text":"...","code":"..."}`
+needs every newline as `\n`, quote as `\"`, backslash as `\` inside
+`code` — exactly the escaping that LLMs most often get wrong.
+
+### What to learn
+- JSON string escaping rules (RFC 8259 §7): the six escapes + `\uXXXX`
+- Defensive parsing patterns: strict parse → one corrective retry →
+  fenced ` ```lua ` extraction fallback → clean error, never a crash
+- Why "read the device protocol at the source" found two host bugs:
+  per-line fail-closed sandbox scan (`-612` before `SCRIPT END`) and
+  the `{"status":"error","code":N}` envelope shape — both only visible
+  in `cli_commands.c` / `lua_llm_bridge.c`
+
+### Resources
+- `host_app/assistant.py` (`parse_envelope`, `upload_script`)
+- `tests/host/test_assistant.py` (escaping round-trip, fenced fallback)
+- `harness/02-knowledge/assistant-session-2026-08-28.md` (process report)

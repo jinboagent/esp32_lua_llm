@@ -1,0 +1,17 @@
+(no device on COM99: could not open port 'COM99': FileNotFoundError(2, 'The system cannot find the file specified.', None, 2))
+(running without live data; /scan /conn /deploy are disabled)
+=== assistant session (2026-08-28 19:17) ===
+llm backend: none (--no-llm or no key)
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_191703.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+(--no-llm mode: prompts stay local; free text will not reach any cloud service)
+type /help for commands; /quit exits
+you: /samples
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 0 invalid dropped)
+you: hello there
+(--no-llm mode - the prompt was NOT sent anywhere)
+you: /quit
+(exit - cleaning up)
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_191703.log

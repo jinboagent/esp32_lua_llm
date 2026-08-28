@@ -1,0 +1,39 @@
+=== assistant session (2026-08-28 19:08) ===
+llm backend: glm-5.2
+transcript: E:\agent\esp32_lua_llm\assistant_20260828_190818.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+device: idle  (/scan on to start)
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+type /help for commands; /quit exits
+you: /scan on
+(scan started; collecting 5s of advertisements)
+(buffer: 51 adv lines (19 addresses), 0 conn lines, 9 invalid dropped)
+you: keep only my two personal devices in the stream and suppress everything else
+(asking glm-5.2 - buffer: 56 adv lines (19 addresses), 0 conn lines, 9 invalid dropped)
+llm asks: Which two addresses (or device names) are your personal devices? I see 19 distinct addresses in the current buffer and need to know which two to keep.
+(answer the question with your next prompt)
+you: the Microsoft one at F1:CE:E0:12:30:31 and the one named LHB-0B05EA98
+(asking glm-5.2 - buffer: 60 adv lines (19 addresses), 0 conn lines, 9 invalid dropped)
+llm proposes Lua - Filters the advertisement stream to only your two devices: the Microsoft device at F1:CE:E0:12:30:31 (matched by address) and the LHB-0B05EA98 (matched by name, since its random address may rotate). Everything else is suppressed.
+--- lua code ---
+  -- Keep only two personal devices:
+  -- 1. F1:CE:E0:12:30:31 (Microsoft device, by address)
+  -- 2. LHB-0B05EA98 (by name, random addr may rotate)
+  
+  function on_adv(addr, addr_type, rssi, name, uuids, manu_id, manu_data)
+    if addr == "F1:CE:E0:12:30:31" then return true end
+    if name == "LHB-0B05EA98" then return true end
+    return false
+  end
+--- end ---
+deploy? [y/N]
+  confirm> /quit
+(kept as the last artifact - /deploy re-offers it)
+(stdin closed - quitting)
+(exit - cleaning up)
+  (script_stop: {"status":"error","cmd":"script_stop","code":-911,"msg":"invalid state: no script running"})
+  (scan_stop ok)
+  (conn_stop: {"status":"error","cmd":"conn_stop","code":-453})
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260828_190818.log

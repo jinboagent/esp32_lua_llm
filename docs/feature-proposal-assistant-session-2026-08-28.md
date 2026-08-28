@@ -4,10 +4,10 @@
 |-------------|----------------------------------------------------|
 | Date        | 2026-08-28                                         |
 | Branch      | `feature/5-assistant` (at implementation)          |
-| Status      | **PROPOSAL — amended 2026-08-28** (review R1, R2, Rec1–Rec3 from docs/review-h5-host-tooling-2026-08-28-deepseek.md incorporated) — awaiting final sign-off |
+| Status      | **IMPLEMENTED 2026-08-28** — promoted to `harness/01-features/stage5-host/feature_assistant_session.md` (H5.3) on branch `feature/5-assistant`; verification report: `harness/02-knowledge/assistant-session-2026-08-28.md` |
 | Author      | ZCode side-session design discussion with product owner (2026-08-28) |
 | Future ID   | **H5.3** (host-tooling stage 5; H5.1 = llm_loop.py, H5.2 = host cases) |
-| Scope       | Review document only; no code changes yet          |
+| Scope       | Review document only; no code changes yet (the implementation lives on the branch above) |
 
 **What reviewers are asked to evaluate:** (1) the feature requirement,
 especially the **message Prompt** and the **typed response contract**
