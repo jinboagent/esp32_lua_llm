@@ -1,47 +1,76 @@
 # ESP32-S3 BLE Sniffer Dongle
 
-> Context-optimized project overview. Full specs in `harness/`. Root `README.md` has build/usage details.
+> Context-optimized project overview for AI coding agents. Full specs in `harness/`. Root `README.md` has build/usage details. New here? `docs/quickstart.md` is the 10-minute path.
 
 ## Architecture
 
-ESP32-S3 passive BLE advertisement scanner → AD parse → C filters → optional Lua hooks → JSON lines over USB CDC → host PC LLM analyzes → generates Lua scripts → deploys back via `SCRIPT LOAD`. 13 features across 4 stages.
+ESP32-S3 passive BLE advertisement scanner → AD parse → C filters → optional Lua hooks → JSON lines over USB CDC → host PC tools. Stage 5 closes the product loop on the PC: an LLM analyzes the stream, answers questions, and writes Lua scripts deployed back over `SCRIPT LOAD`. Optional GATT-central connection plane (F2.4) re-streams peer data as `"src":"conn"` lines (analysis-only — conn lines deliberately bypass the Lua hooks).
 
-## Current Status: v1.0.0 — ALL STAGES COMPLETE
+**Three host tools (stage 5):**
 
-- All 13 features implemented and hardware-verified; all bug backlogs closed (0 open items)
-- Verification: host tests 67/67 · `test_bridge_hw.py` 32/32 · `test_power_hw.py` 14/14 (COM12)
-- Components: `usb`, `storage`, `ble` (NimBLE scan + dedup + pipeline), `proto`, `json_enc`, `filter`, `lua` (5.4 + sandbox + script mgmt), `cli` (state machine), `bridge` (text-line upload), `power` (light sleep)
-- Next candidate work: host-side LLM-loop tooling (scan JSON → LLM → Lua → upload); see `status/LATEST.md`
+| Tool | What it does | When to use |
+|------|--------------|-------------|
+| `llm_loop.py` (H5.1) | one-shot capture → LLM writes Lua → deploy → verify | scripted/batch runs |
+| `host_app/run_case.py` (H5.2) | pluggable data-generator "cases" over the conn plane; `--estimate` checks the LLM against ground truth | demoing/verifying the connection plane end-to-end |
+| `host_app/assistant.py` (H5.3) | interactive session: typed `answer\|lua\|clarify\|error` envelopes, human-confirmed deploys, `--system-extra/--system-file` prompt experiments | human-in-the-loop work, exploring the live data |
+
+## Current Status: v1.1.0 — stages 1–5 complete
+
+- All 13 firmware features (stages 1–4) + F2.4 conn plane + stage-5 host tooling implemented and hardware-verified
+- 2026-08-28: F2.4 GATT data path fixed end-to-end (NimBLE discovery callback dispatch, JSON merge separators, `CONN TARGET` response validity); stage 5 squash-merged
+- Verification inventory: Unity host suite 22/22 · python units 42/42 (assistant) + 33/33 (run_case) · `test_ble_conn_hw.py` 43/0 (2 informed SKIPs) · plant demo 60/60 conn lines, τ_est 9.5 vs 10.0
+- Next candidate work: `read_only` case (dongle poll path — the only data path no case covers), F2.4 backlog (firmware-side CONN STOP settle, strict-JSON sweep over CLI responses), llm_loop `-612` upload blind spot; see `status/LATEST.md`
 
 ## Key Rules
 
-- **Reuse before building**: Check ESP-IDF built-ins and ESP Component Registry before writing custom code
-- **malloc/free**: Allowed for libraries; application logic uses static buffers (Lua runs on a static pool allocator)
+- **Reuse before building**: check ESP-IDF built-ins and the component registry first
+- **malloc/free**: allowed for libraries; application logic uses static buffers (Lua runs on a static pool allocator)
 - **Error codes**: module-specific ranges in `interfaces/*_if.h` (CLI -9xx, bridge -6xx/-8xx, storage -7xx, BLE -4xx, pipeline -8xx)
-- **Lua sandbox**: whitelist libs only (base/string/table/math/utf8); uploads scanned for forbidden tokens (os./io./debug./require/...) → -612
-- **Concurrency**: `lua_State` protected by `lua_engine_lock/unlock`; dedup table by spinlock; scan state atomic
+- **Lua sandbox**: whitelist libs only (base/string/table/math/utf8); uploads scanned **per line, fail-closed** for forbidden tokens (os./io./debug./require) → -612 (the rejection fires mid-upload, before `SCRIPT END`)
+- **Concurrency**: `lua_State` behind `lua_engine_lock/unlock`; dedup table by spinlock; scan state atomic
+- **Serial port (N3)**: closing COM12 resets the chip — keep the port open for the whole session; the final close at orderly exit is the accepted reset. `CONN STOP` returning ok means "terminate issued", not "state is off" — wait for `CONN STATUS state:"off"` before the next conn command
+- **Host tools are self-contained by design** (copied helpers, no cross-imports); shared *conventions*, not shared code — see `harness/01-features/stage5-host/README.md`
+- **LLM credentials** (`.llm_env`, gitignored): env vars win as a UNIT; the file may carry legacy `LLM_*` or provider pairs (`DASHSCOPE_*`, `TOKEN_PLAN_*`; model `LLM_MODEL`/`QWEN_MODEL`). The tools self-heal two known traps: a rejected shell key (401 → announced fallback to the file) and the Aliyun `/api/v1` native-dialect root (404 → announced retry on `/compatible-mode/v1`)
+- **Never commit directly to master**; one feature per branch, squash-merge, keep the branch (`harness/00-global-context/git_workflow.md`); every significant session leaves a process report + evidence in `harness/02-knowledge/`
 
-## Build
+## Build & Test
 
 ```
-# Host tests
-cmake --build tests/host/build && tests/host/build/test_runner.exe
+# Firmware (cmd/PowerShell)
+scripts\build.bat && scripts\flash.bat
 
-# ESP32
-scripts/build.bat && scripts/flash.bat        (or idf.py build / flash / monitor)
-python tests/hw/test_bridge_hw.py      # F4.1+F4.2 hardware suite
-python tests/hw/test_power_hw.py       # F4.3 hardware suite
+# Firmware (Git Bash — idf_cmd_init.bat breaks there; use this instead)
+cmd //c "set MSYSTEM=&& set IDF_PATH=C:\Espressif\frameworks\esp-idf-v5.1&& set IDF_TOOLS_PATH=C:\Espressif\tools&& set PATH=C:\Espressif\tools\cmake\3.24.0\bin;C:\Espressif\tools\ninja\1.11.1;C:\Espressif\tools\xtensa-esp-elf\esp-13.2.0_20240530\xtensa-esp-elf\bin;C:\Espressif\tools\python_env\idf5.2_py3.12_env\Scripts;%PATH%&& C:\Espressif\tools\python_env\idf5.2_py3.12_env\Scripts\python.exe C:\Espressif\frameworks\esp-idf-v5.1\tools\idf.py build"
+# append " -p COM12 flash" to flash (same env)
+
+# C host tests (Unity; fresh dir, mingw + cmake on PATH)
+export PATH="/c/msys64/mingw64/bin:/c/Espressif/tools/cmake/3.24.0/bin:$PATH"
+cmake -S tests/host -B /tmp/hostbuild -G Ninja && cmake --build /tmp/hostbuild && /tmp/hostbuild/test_runner.exe
+
+# Python unit tests (host tooling)
+python tests/host/test_assistant.py    # 42
+python tests/host/test_run_case.py     # 33
+
+# Hardware suites (dongle on COM12)
+python tests/hw/test_ble_conn_hw.py    # F2.4: 43 checks + 2 informed SKIPs
+python tests/hw/test_ble_lua_hw.py     # BLE+Lua data plane
+python tests/hw/test_bridge_hw.py      # F4.1+F4.2
+python tests/hw/test_power_hw.py       # F4.3
 ```
 
 ## Key Files
 
 | Path | Purpose |
 |------|---------|
-| `interfaces/*_if.h` | Public APIs — the only cross-module surface |
-| `firmware/components/` | Implementation modules |
+| `interfaces/*_if.h` | Public C APIs — the only cross-module surface |
+| `firmware/components/` | Implementation modules (usb, ble, proto, json_enc, filter, lua, cli, bridge, power, storage) |
 | `main/main.c` | Init chain + USB command loop |
-| `tests/host/` | Unity host tests (67) |
+| `host_app/` + `llm_loop.py` | Stage-5 host tooling (self-contained scripts) |
+| `tests/host/` | Unity C suite + python unit tests for the host tools |
+| `tests/hw/` | pyserial/WinRT hardware suites (COM12) |
 | `harness/00-global-context/` | Product spec, coding rules, build env, git workflow |
-| `harness/01-features/` | All 13 implemented feature specs |
-| `bug_check/README.md` | Consolidated bug tracking (closed) |
-| `status/LATEST.md` | Latest status snapshot |
+| `harness/01-features/` | Per-feature specs incl. `stage5-host/` (H5.1–H5.3 + overview README) |
+| `harness/02-knowledge/` | Process reports + run-transcript evidence (the WHY behind commits) |
+| `bug_check/README.md` | Consolidated bug tracking |
+| `status/LATEST.md` | Latest status snapshot + pointer |
+| `docs/quickstart.md` | 10-minute getting-started path |

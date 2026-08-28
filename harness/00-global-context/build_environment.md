@@ -202,3 +202,24 @@ Consider removing unused ESP-IDF versions to save disk space:
 ```bash
 python C:\Espressif\frameworks\esp-idf-v5.1\tools\idf_tools.py uninstall
 ```
+
+---
+
+## 7. Building from Git Bash (no idf_cmd_init)
+
+`idf_cmd_init.bat` breaks under Git Bash (`git --version` probing fails),
+and idf.py refuses MSYS environments via the `MSYSTEM` variable. The
+working invocation (proven 2026-08-28) clears `MSYSTEM` and calls idf.py
+directly with the tool paths:
+
+```bash
+cmd //c "set MSYSTEM=&& set IDF_PATH=C:\Espressif\frameworks\esp-idf-v5.1&& \
+set IDF_TOOLS_PATH=C:\Espressif\tools&& \
+set PATH=C:\Espressif\tools\cmake\3.24.0\bin;C:\Espressif\tools\ninja\1.11.1;C:\Espressif\tools\xtensa-esp-elf\esp-13.2.0_20240530\xtensa-esp-elf\bin;C:\Espressif\tools\python_env\idf5.2_py3.12_env\Scripts;%PATH%&& \
+C:\Espressif\tools\python_env\idf5.2_py3.12_env\Scripts\python.exe C:\Espressif\frameworks\esp-idf-v5.1\tools\idf.py build"
+# flash: append " -p COM12 flash" to the same command
+```
+
+Notes: the project's `build/` directory was configured with the python
+env under `C:\Espressif\tools\python_env\idf5.2_py3.12_env` — use that
+exact interpreter or idf.py demands a `fullclean`.

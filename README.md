@@ -6,23 +6,32 @@ a host PC over USB CDC. A host-side LLM can analyze the captured traffic and
 generate Lua scripts that are deployed back to the device — an AI-driven BLE
 analysis loop.
 
-## Status: v1.0.0 released ✅
+## Status: v1.1.0 — stages 1–5 complete ✅
 
-- **All 13 features across 4 stages implemented and hardware-verified** (see `status/LATEST.md`)
-- **All evaluation findings closed** through 2026-08-11: H1 (JSON escaping) /
-  H2 (overlong-line drain) / H3 (chunk-limit doc) fixed; H4 (Lua pool
-  fragmentation) instrumented (`free_heap` + `lua_pool` in STATUS) with a
-  2 h soak running (see `bug_check/README.md`)
-- Verification on COM12 hardware: host tests **108/108** · `tests/hw/test_bridge_hw.py`
-  **32/32** · `tests/hw/test_power_hw.py` **14/14** · `tests/hw/test_ble_lua_hw.py` **45/45** ·
-  `tests/hw/test_ble_peer_hw.py` **11/11** · `tests/hw/test_ble_conn_hw.py` (F2.4 C0)
-  **29/29** — GATT data path C1–C6 ported as a WinRT GATT-server tier
-  (skips where WinRT is unavailable; a real peer remains the follow-up)
+- **All 13 firmware features (stages 1–4) + F2.4 conn plane + stage-5 host
+  tooling implemented and hardware-verified** (see `status/LATEST.md`;
+  new to the project? `docs/quickstart.md` is the 10-minute path)
+- **Stage 5 — host tooling (merged 2026-08-28)**: `llm_loop.py` (H5.1
+  one-shot loop) · `host_app/run_case.py` (H5.2 application cases with
+  ground-truth-checked LLM estimates) · `host_app/assistant.py` (H5.3
+  interactive session, typed envelopes, human-confirmed deploys) —
+  overview: `harness/01-features/stage5-host/README.md`
+- **F2.4 GATT data path working end-to-end (2026-08-28)**: NimBLE
+  discovery callback dispatch + JSON merge separators fixed;
+  PC-as-GATT-peer verified (plant demo: 60/60 conn lines, physics
+  green, τ_est 9.5 vs 10.0)
+- Verification on COM12 hardware: Unity host suite **22/22** · python
+  units **42/42** (assistant) + **33/33** (run_case) ·
+  `test_ble_conn_hw.py` **43/0** (2 informed SKIPs) · bridge **32/32** ·
+  power **14/14** · BLE+Lua **45/45** · peer **11/11** — transcripts for
+  stage-5 claims live in `harness/02-knowledge/`
 - **F2.4 optional BLE connection (GATT client)** — implemented and merged
   (spec: `harness/01-features/stage2-ble-core/feature_ble_conn.md`):
   `CONFIG_BLE_CONN_ENABLED` build flag + `CONN` command family; conn lines
   stream as `"src":"conn"` on the same JSON stream (reference variant A
   preserved on branch `ble_connected`)
+- All stage-1–4 evaluation findings closed through 2026-08-11
+  (see `bug_check/README.md`)
 
 ## Architecture
 
@@ -159,16 +168,17 @@ pressure is field-observable.
 firmware/components/   ESP-IDF components (one per module above)
 interfaces/            Public C headers (*_if.h) — the only cross-module surface
 main/                  app_main: init chain + USB command loop
-tests/host/            Unity host tests (no ESP-IDF needed) + third_party/unity
+tests/host/            Unity C host tests + python unit tests for the host
+                       tools (test_assistant.py, test_run_case.py)
 tests/harness/         (historical) on-target test sources, superseded by
-                       tests/host + the root HIL suites
-harness/00-global-context/  product overview, coding rules, build env, git workflow,
-                       architecture patterns & feature-patch guide
-harness/01-features/   per-feature specs (13 v1 features + F2.4 + stage5-host tool)
+                       tests/host + the HIL suites
+harness/00-global-context/  product overview, coding rules, build env, git workflow
+harness/01-features/   per-feature specs (13 v1 features + F2.4 + stage5-host/)
+harness/02-knowledge/  process reports + run-transcript evidence (per session)
 harness/02-future/     v2+ spec space / promoted-feature notes
 bug_check/             evaluations + fix reports (index: bug_check/README.md)
 status/                session handoff reports (pointer: status/LATEST.md)
-docs/                  proposals, reviews, evaluation responses, templates,
+docs/                  proposals, reviews, quickstart, templates,
                        example LLM-generated Lua; docs/archive/ = history
 .githooks/             commit-msg hook enforcing the 4-section standard
 .qwen/                 local agent settings (gitignored): SessionStart hook
@@ -181,6 +191,8 @@ scripts/build.bat / flash.bat / monitor.bat  build · flash COM12 · console
 scripts/dev_env.bat      idempotent tmux `esp32` build pane (WSL)
 scripts/send_cmd.bat / h.bat  one-line command senders for manual sessions
 llm_loop.py            host LLM loop (capture/analyze/deploy/loop, --dry-run)
+host_app/run_case.py   H5.2 application-case runner (plant demo + --estimate)
+host_app/assistant.py  H5.3 interactive LLM assistant session
 .llm_env               gitignored LLM credentials (KEY=value, local only)
 
 tests/hw/test_bridge_hw.py  F4.1+F4.2 hardware suite (32 checks, pyserial on COM12)
@@ -327,6 +339,11 @@ stream. `--dry-run` needs no API key; credentials live in `.llm_env`
 conversation instead of a one-shot, run
 `python host_app/assistant.py COM12` — ask questions about the live
 data, answer the LLM's clarifying questions, confirm deploys by hand.
+To see the connection plane proven with checkable numbers, run the
+plant demo (H5.2): `python host_app/run_case.py COM12 --case
+first_order --estimate` — the PC streams a first-order plant over GATT,
+the dongle re-streams it, and the LLM's τ estimate is checked against
+the configured ground truth.
 
 ### Troubleshooting
 
@@ -345,16 +362,21 @@ COM12 (one program owns the port at a time).
 
 | Layer | Tool | Covers | Checks |
 |-------|------|--------|:------:|
-| Host unit | Unity + MinGW, `tests/host` (stubs for ble/lua/storage/power/conn) | AD parser, JSON encoder + escaping + conn line model, filter logic, CLI state machine, bridge protocol, pool allocator | 108 |
-| HW command plane | `tests/hw/test_bridge_hw.py`, `tests/hw/test_power_hw.py`, `tests/hw/test_ble_conn_hw.py` (C0 + C1–C6 GATT tier) | CLI/bridge/state guards/sandbox on device, PM behavior, CONN command family + error codes + Ctrl+C recovery + scan coexistence; GATT data path via WinRT server when available | 32 + 14 + 29 |
+| Host unit (C) | Unity + MinGW, `tests/host` (stubs for ble/lua/storage/power/conn) | AD parser, JSON encoder + escaping + conn line model, filter logic, CLI state machine, bridge protocol, pool allocator | 22 |
+| Host unit (python) | `tests/host/test_assistant.py`, `tests/host/test_run_case.py` | typed-envelope parsing incl. fenced fallback, buffers/history, deploy gate + mid-upload −612, plant physics vs ground truth, LLM config resolution + self-heals | 42 + 33 |
+| HW command plane | `tests/hw/test_bridge_hw.py`, `tests/hw/test_power_hw.py`, `tests/hw/test_ble_conn_hw.py` (C0 + C1–C6 GATT tier) | CLI/bridge/state guards/sandbox on device, PM behavior, CONN command family + error codes + Ctrl+C recovery + scan coexistence; GATT data path via WinRT server when available | 32 + 14 + 43 |
 | HW data plane | `tests/hw/test_ble_lua_hw.py` (ambient RF), `tests/hw/test_ble_peer_hw.py` (PC advertises via WinRT as a controlled peer) | JSON schema / ts monotonicity / dedup invariants, 7-arg hook ABI, suppression + transform on the live stream, v1 non-connectability | 45 + 11 |
 | Interactive & soak | `tests/hw/putty_sim_test.py`, `tests/hw/cr_lf_test.py`, `tests/hw/capture_25s.py`, `tests/hw/soak_test.py` | terminal contract (CR/LF/Ctrl+C), continuous-scan windows, 2 h pool-fragmentation soak with `free_heap`/`lua_pool` sampling | — |
-| LLM loop (host) | `llm_loop.py` | the product loop end-to-end: capture → LLM-generated Lua → deploy → verify; `--dry-run` exercises the mechanics with no API key | — |
+| LLM loop (host, live) | `llm_loop.py`, `host_app/run_case.py --estimate`, `host_app/assistant.py` | the product loop end-to-end: capture → LLM-generated Lua → deploy → verify; ground-truth-checked estimates; interactive typed envelopes — transcripts archived in `harness/02-knowledge/` | — |
 
 Principles (each learned from a real miss):
 
 - **Keep the port open** for any in-scan check — closing COM12 resets the chip (N3).
 - **Strict `json.loads` assertions** on every response; substring matching let H1 slip through.
+- **Match responses to the command that issued them** (the `cmd` field) — a reader that
+  returns "the first status-looking line" can pass checks with stale lines.
+- **`CONN STOP` ok ≠ state off** — the GAP disconnect event lands later; wait for
+  `CONN STATUS state:"off"` before the next conn command.
 - **Ambient RF is nondeterministic** — exact-field verification needs the controlled PC peer.
 - **FreeRTOS/NimBLE behavior isn't host-stubbable** — the data plane is hardware-in-the-loop only.
 - **Suites only see the first seconds after SCAN START** — long-window and soak tools exist to cover windowing/fragmentation bugs.
@@ -479,9 +501,12 @@ end
 
 | Need | Where |
 |------|-------|
+| **Getting started (10 min)** | `docs/quickstart.md` |
 | Product spec & design | `harness/00-global-context/project_overview.md` (historical plan: `docs/archive/qwen_featuer.md`) |
 | Coding rules / error codes | `harness/00-global-context/coding_rules.md` |
-| Architecture patterns & feature-patch guide | `harness/00-global-context/architecture_patterns.md` |
-| Per-feature specs + acceptance criteria | `harness/01-features/` |
+| Architecture deep-dive | this README (Architecture onward) + `harness/00-global-context/project_overview.md` |
+| Per-feature specs + acceptance criteria | `harness/01-features/` (stage-5 host tools: `stage5-host/README.md`) |
+| Why a change was made (process reports + run evidence) | `harness/02-knowledge/` |
 | Current project status | `status/LATEST.md` |
 | Bug history & deferred items | `bug_check/README.md` |
+| AI-agent context (rules, build recipes, next work) | `CLAUDE.md` |
