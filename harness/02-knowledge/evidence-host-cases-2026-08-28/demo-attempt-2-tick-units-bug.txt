@@ -1,0 +1,21 @@
+=== run_case first_order on COM12 ===
+ground truth: first-order plant: tau=10.0, K=1.0, u steps 0->1 at t=5.0; y(15.0) ~= 0.632 (63.2% of K); steady state ~= 1.000
+expect ~60 conn lines over 60s @ 1.00s cadence
+  [peer] advertisement status -> 3
+  [peer] advertisement status -> 2
+connected to peer A3:BD:AC:67:2F:5E (mode notify)
+peer subscribed (notify path ready)
+t=  9.8s  u=0 y=0.000    lines 0/0
+t= 20.0s  u=0 y=0.000    lines 0/0
+t= 29.9s  u=0 y=0.000    lines 0/0
+t= 39.9s  u=0 y=0.000    lines 0/0
+t= 49.9s  u=0 y=0.000    lines 0/0
+t= 59.8s  u=0 y=0.000    lines 0/0
+
+--- summary: 0 / 0 notified lines received (0%) -> FAIL (>=90% required)
+capture: plant_capture.jsonl
+ground truth: first-order plant: tau=10.0, K=1.0, u steps 0->1 at t=5.0; y(15.0) ~= 0.632 (63.2% of K); steady state ~= 1.000
+  FAIL  no conn lines collected
+
+--estimate skipped: no conn lines collected
+(cleanup done: CONN STOP; port closed)

@@ -708,10 +708,18 @@ static int h_conn(const char *action, char *response, uint16_t response_len)
         const char *chr_arg = (strchr(args, ' ') != NULL) ? chr : NULL;
         int ret = ble_conn_set_target(svc, chr_arg);
         if (ret == 0) {
-            CLI_EMIT(response, response_len,
-                "{\"status\":\"ok\",\"cmd\":\"conn_target\",\"svc\":\"%s\""
-                "%s%s}",
-                svc, chr_arg ? ",\"chr\":\"" : "", chr_arg ? chr : "");
+            /* Two explicit forms: a conditional format string cannot
+             * close the chr quote only when chr is emitted (the shared
+             * tail either drops or doubles the quote). */
+            if (chr_arg != NULL) {
+                CLI_EMIT(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"conn_target\","
+                    "\"svc\":\"%s\",\"chr\":\"%s\"}", svc, chr_arg);
+            } else {
+                CLI_EMIT(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"conn_target\","
+                    "\"svc\":\"%s\"}", svc);
+            }
         } else {
             CLI_EMIT(response, response_len,
                 "{\"status\":\"error\",\"cmd\":\"conn_target\","

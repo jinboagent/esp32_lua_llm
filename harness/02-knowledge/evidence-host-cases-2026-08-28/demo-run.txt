@@ -1,0 +1,26 @@
+=== run_case first_order on COM12 ===
+ground truth: first-order plant: tau=10.0, K=1.0, u steps 0->1 at t=5.0; y(15.0) ~= 0.632 (63.2% of K); steady state ~= 1.000
+expect ~60 conn lines over 60s @ 1.00s cadence
+  [peer] advertisement status -> 3
+  [peer] advertisement status -> 2
+connected to peer 5C:1A:04:E2:2B:6B (mode notify)
+peer subscribed (notify path ready)
+t= 10.0s  u=1 y=0.463    lines 11/11
+t= 20.1s  u=1 y=0.815    lines 21/21
+t= 30.0s  u=1 y=0.935    lines 31/31
+t= 40.0s  u=1 y=0.977    lines 41/41
+t= 50.0s  u=1 y=0.992    lines 51/51
+
+--- summary: 60 / 60 notified lines received (100%) -> PASS (>=90% required)
+capture: plant_capture.jsonl
+ground truth: first-order plant: tau=10.0, K=1.0, u steps 0->1 at t=5.0; y(15.0) ~= 0.632 (63.2% of K); steady state ~= 1.000
+  PASS  envelope ts/addr/src=conn on every line
+  PASS  payload fields t/u/y merged on every line
+  PASS  physics: y(t=15.0)=0.683 vs 63.2%K=0.632 (10% tol)
+  PASS  steady state: y(t=59.0)=0.997 vs K=1.000 (10% tol)
+
+--- estimate act (LLM: qwen3.8-flash, 60 lines)
+  configured tau=10.0 K=1.0
+  estimated   tau=9.5 K=1.0 (method: Nonlinear least-squares fit of y=K*(1-exp(-(t-ts)/tau)) to post-step samples; K from asymptote and tau/ts from log-linear regression of ln(1-y/K) versus t.)
+  PASS  tau_est within ±30% of configured
+(cleanup done: CONN STOP; port closed)

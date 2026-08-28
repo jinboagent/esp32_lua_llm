@@ -604,3 +604,50 @@ Window 2: Code browsing (vim, less, cat)
 ### Resources
 - [tmux cheat sheet](https://tmuxcheatsheet.com/)
 - Project file: `harness/00-global-context/build_environment.md`
+
+## 15. Conditional C Format Strings Cannot Quote One Branch Only
+
+**Why:** The F2.4 `CONN TARGET` response built `"svc":"%s"` + a
+runtime-chosen `,"chr":"` prefix + `%s}` — structurally unable to close
+the chr quote only when chr is emitted, which produced invalid JSON for
+every JSON-strict host tool while a lenient reader silently skipped it.
+
+**Context:** The H5.2 plant demo died at CONN TARGET (2026-08-28); the
+raw wire line showed `"chr":"…a01}`. The first repair attempt
+(`"%s%s\"}"`) then broke the single-UUID form with a doubled quote —
+caught only by the hw suite's C0 checks.
+
+### What you just learned
+- Split conditional formats into explicit branches; verify EVERY branch,
+  not just the one your current flow exercises.
+- printf format strings are concatenated at compile time — the branch
+  logic has to live in the code, not inside the format.
+- A serial reader that returns "the first status-looking line" can pass
+  checks with stale lines from a previous command — match the response's
+  identity (e.g. its `cmd` field) to the command you issued.
+- `CONN STOP` returning ok means "terminate issued", not "state is off"
+  — sequence against observed state.
+
+### Resources
+- `firmware/components/cli/cli_commands.c` (h_conn TARGET)
+- `tests/hw/test_ble_conn_hw.py` (`cmd_during_scan`, `wait_conn_off`)
+- `harness/02-knowledge/host-cases-2026-08-28.md`
+
+## 16. Aliyun MaaS Endpoints: /compatible-mode/v1 vs /api/v1
+
+**Why:** The `.llm_env` pointed at a dedicated Aliyun MaaS deployment
+(`ws-….maas.aliyuncs.com`) via `/api/v1` and every chat request 404'd.
+
+**Context:** After updating `.llm_env` (2026-08-28), probing showed
+`GET /api/v1/models` working but `/chat/completions` missing — that root
+speaks the native DashScope dialect. The OpenAI-compatible route on the
+same host is `/compatible-mode/v1/chat/completions`.
+
+### What to learn
+- Same host, two protocols: `/api/v1/...` = native (input/output
+  envelopes), `/compatible-mode/v1/...` = OpenAI-shaped.
+- Diagnose 404-with-working-auth by probing `/models` on candidate
+  roots before blaming the key.
+
+### Resources
+- `.llm_env` (base URL), `host_app/assistant.py` (`resolve_llm_config`)

@@ -31,6 +31,7 @@
   [peer] advertisement status -> 2
   PASS  C1 SCAN START
   PASS  C1 TARGET svc+char
+  PASS  C1 TARGET response valid JSON with svc+chr echo
   PASS  C1 auto START (tap path)
   PASS  C1 connected within 15 s
   PASS  C1 subscribed (notify mode)
@@ -42,8 +43,7 @@
   PASS  C5 responsive after burst
   PASS  C5 rx_notify counted
   PASS  C5 STOP ok
-  PASS  C2 direct START (learned type)
-  SKIP  C2 (link reached active then the WinRT peer dropped it — advertisement does not reliably survive a connection cycle on this stack)
+  SKIP  C2 (direct START rejected: {'status': 'error', 'cmd': 'conn_start', 'code': -455} — the WinRT advertisement does not reliably survive a connection cycle on this stack)
   SKIP  C6 (link supervision longer than window)
 
 43 passed, 0 failed

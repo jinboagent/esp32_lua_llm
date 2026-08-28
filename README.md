@@ -382,6 +382,30 @@ vars win) — useful when your terminal's env doesn't reach other shells. The
 sample sent to the model is capped at 30 deduplicated advertisement lines to
 bound token cost.
 
+## Host tooling: `host_app/run_case.py` (application cases, H5.2)
+
+Runs a data-generator **case** against the connection plane: the PC
+simulates a plant, serves it over BLE GATT (WinRT GATT server), the
+dongle auto-connects by service UUID and re-streams it as
+`"src":"conn"` JSON lines into a JSONL capture; `--estimate` sends the
+capture to the LLM and checks its answer against the case's configured
+ground truth (spec: `harness/01-features/stage5-host/feature_host_cases.md`).
+
+```bash
+python host_app/run_case.py COM12 --case first_order --tau 10 --step-at 5 --secs 60 --estimate
+python host_app/run_case.py --help      # all case flags; no hardware needed
+```
+
+Cases are pluggable — one class + one line in the `CASES` registry; the
+runner lifecycle never changes. A machine that cannot serve the WinRT
+GATT-server role reports the precise exception with remediation hints;
+a session that never becomes active is a pass-with-artifact (the
+transcript is the deliverable). The demo composes with the advertisement
+plane only under `--with-scan`. LLM credentials for the `--estimate`
+act resolve from `.llm_env` (legacy `LLM_*` triple or provider pairs
+`DASHSCOPE_*`/`TOKEN_PLAN_*` with `QWEN_MODEL`) or from the
+environment as a unit.
+
 ## Usage quick reference
 
 Connect to the USB-Serial/JTAG console (COM12 @ 115200). Commands:

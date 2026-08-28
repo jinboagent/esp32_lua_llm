@@ -4,10 +4,10 @@
 |-------------|----------------------------------------------------|
 | Date        | 2026-08-28                                         |
 | Branch      | `feature/5-host-cases` (at implementation)         |
-| Status      | **PROPOSAL — amended 2026-08-28** (review R3, Rec2–Rec3 + 2026-08-28 hardware findings incorporated) — awaiting final sign-off |
+| Status      | **IMPLEMENTED 2026-08-28** — promoted to `harness/01-features/stage5-host/feature_host_cases.md` (H5.2) on branch `feature/5-host-cases`; verification report: `harness/02-knowledge/host-cases-2026-08-28.md` (implementation exposed two F2.4 firmware bugs, fixed on the same branch; final live demo pending a dongle replug) |
 | Author      | ZCode side-session design discussion with product owner (2026-08-28) |
 | Future ID   | **H5.2** (host-tooling stage 5; H5.1 = llm_loop.py) |
-| Scope       | Review document only; no code changes yet          |
+| Scope       | Review document only; no code changes yet (the implementation lives on the branch above) |
 
 **What reviewers are asked to evaluate:** (1) the feature requirement
 itself (§2), (2) the pluggable design pattern and its independence from

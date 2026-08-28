@@ -75,3 +75,4 @@ tests/host/build_zai/
 pilot_p0_smoke.jsonl
 hw_peer_out.txt
 build_off_check.txt
+plant_capture.jsonl

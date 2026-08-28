@@ -1,24 +1,27 @@
 # LATEST — Status Pointer
 
-**Current status:** [`status-2026-08-22-improvement-pass.md`](status-2026-08-22-improvement-pass.md)
+**Current status:** [`status-2026-08-28-host-cases.md`](status-2026-08-28-host-cases.md)
 
 ## At a glance
 
-- **Master is the F2.4 product line** (adoption decided 2026-08-23): the
-  improved variant (zai) was merged forward and pushed; `ble_connected`
-  preserves variant A as the reference branch
-- **Improvement pass** (2026-08-22): evaluation
-  (`docs/evaluation-ble-conn-zai-2026-08-22.md`) became a merge — named
-  error constants (+`-457`), `os_mbuf_copydata`, notice-evicts-oldest,
-  preferred-MTU pin, zombie-scan + atomic-paused fixes, Ctrl+C-aware
-  sliced direct-start wait (`usb_console_poll_interrupt`), C1–C6 WinRT
-  GATT tier ported
-- **README deep-dive cherry-picked to master** (2026-08-26): architecture
-  subsections (layers/threads/contracts/memory/flags), content map,
-  guided usage tour + troubleshooting, WSL host-test fallback — facts
-  adapted to the improved variant (worker prio 2, 108/108, C0 29)
-- **Verified post-pass**: host 108/108 · C0 29/29 · regressions
-  32/14/45/11 · on/off builds clean
-- **Open**: AC-9 real-peer GATT data path (ATC sensor pilot / nRF
-  Connect); push `ble_connected` reference branch when permitted;
-  re-soak stays deferred
+- **H5.2 host cases complete on `feature/5-host-cases`**:
+  `host_app/run_case.py` — pluggable case framework (first_order plant
+  demo), `--estimate` LLM act checked against ground truth. Unit 24/24
+  · hw 43/0 · demo 60/60 lines · τ_est 9.5 vs 10.0 (qwen3.8-flash)
+- **Two F2.4 firmware bugs found & fixed on that branch, wire-verified**:
+  two-UUID `CONN TARGET` response was invalid JSON (missing `chr`
+  quote — now two explicit emits, C1 asserts the echo); `CONN STOP` ok
+  can precede the state flip to `off` (state-settle host-side, firmware
+  fix on the backlog). Hw suite hardened: response `cmd`-field matching
+  (kills stale-line false passes), C2 START-rejected quirk = informed
+  SKIP
+- **F2.4 GATT data path fix merged earlier today** (on master): NimBLE
+  discovery dispatch + JSON merge separators; PC-as-GATT-peer verified
+  end-to-end
+- **Master is the F2.4 product line** (adoption 2026-08-23);
+  improvement pass + README deep-dive history:
+  [`status-2026-08-22-improvement-pass.md`](status-2026-08-22-improvement-pass.md)
+- **Open**: review/merge `feature/5-host-cases` and
+  `feature/5-assistant` (H5.3); `.llm_env` now uses provider pairs
+  (DASHSCOPE/TOKEN_PLAN/QWEN_MODEL) — port the fallback to
+  assistant.py; F2.4 backlog (CONN STOP settle, strict-JSON sweep)

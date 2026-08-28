@@ -1,0 +1,7 @@
+=== run_case first_order on COM12 ===
+ground truth: first-order plant: tau=10.0, K=1.0, u steps 0->1 at t=5.0; y(15.0) ~= 0.632 (63.2% of K); steady state ~= 1.000
+expect ~60 conn lines over 60s @ 1.00s cadence
+  [peer] advertisement status -> 3
+  [peer] advertisement status -> 2
+error: CONN TARGET failed: None
+(cleanup done: CONN STOP; port closed)

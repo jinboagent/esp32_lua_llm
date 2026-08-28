@@ -41,10 +41,29 @@ def cmd(c, w=0.6):
             return o
     return None
 
+CMD_NAMES = {
+    "STATUS": "status", "VERSION": "version",
+    "SCAN": None, "CONN": None,  # two-word commands resolved below
+    "SCRIPT": None, "POWER": None,
+}
+
+def expected_cmd(c):
+    """Response 'cmd' field for a command line (e.g. 'CONN TARGET x'
+    -> 'conn_target'). Two-word families join with '_'."""
+    words = c.split()
+    if len(words) >= 2 and words[0] in ("SCAN", "CONN", "SCRIPT", "POWER"):
+        return (words[0] + "_" + words[1]).lower()
+    return CMD_NAMES.get(words[0]) if words else None
+
 def cmd_during_scan(c, timeout=8):
     """Response reader that survives a streaming adv line flow: adv lines
     carry "rssi", command responses do not (CONN STATUS carries "addr" —
-    its peer field — so "addr" cannot be the discriminator)."""
+    its peer field — so "addr" cannot be the discriminator). Responses
+    are additionally matched by their 'cmd' field so a stale status line
+    left over from a previous command can never satisfy this one
+    (observed 2026-08-28: a late CONN STATUS response with
+    status:"ok" was returned for a CONN TARGET round trip)."""
+    want = expected_cmd(c)
     s.write((c + "\n").encode())
     s.flush()
     end = time.time() + timeout
@@ -59,7 +78,8 @@ def cmd_during_scan(c, timeout=8):
             o = json.loads(t)
         except json.JSONDecodeError:
             continue
-        if isinstance(o, dict) and "status" in o and "rssi" not in o:
+        if (isinstance(o, dict) and "status" in o and "rssi" not in o
+                and (want is None or o.get("cmd") == want)):
             return o
     return None
 
@@ -73,6 +93,18 @@ def check(name, cond, detail=""):
     else:
         FAIL += 1
         print(f"  FAIL  {name}  {detail}")
+
+def wait_conn_off(timeout=5.0):
+    """CONN STOP can return ok while the GAP disconnect event that flips
+    the conn state to 'off' is still in flight (observed 2026-08-28: an
+    immediate CONN TARGET after STOP got -452). Wait for the settle."""
+    end = time.time() + timeout
+    while time.time() < end:
+        st = cmd_during_scan("CONN STATUS")
+        if st and st.get("state") == "off":
+            return True
+        time.sleep(0.2)
+    return False
 
 # --- C1-C6 peer: PC as WinRT GATT server (variant A port) ----------------
 SVC_UUID = "12345678-1234-1234-1234-123456789abc"
@@ -380,8 +412,12 @@ if peer is not None:
 if peer is not None:
     r = cmd_during_scan("SCAN START")
     check("C1 SCAN START", r and r.get("status") == "ok", str(r))
+    wait_conn_off()
     r = cmd_during_scan(f"CONN TARGET {SVC_UUID} {CHAR_UUID}")
     check("C1 TARGET svc+char", r and r.get("status") == "ok", str(r))
+    check("C1 TARGET response valid JSON with svc+chr echo",
+          r is not None and r.get("svc") == SVC_UUID
+          and r.get("chr") == CHAR_UUID, str(r))
     r = cmd_during_scan("CONN START")
     check("C1 auto START (tap path)", r and r.get("status") == "ok", str(r))
 
@@ -443,28 +479,36 @@ if peer is not None:
     if peer_addr:                            # C2 direct by learned address
         r = cmd_during_scan("SCAN START")
         r = cmd_during_scan(f"CONN START {peer_addr}")
-        check("C2 direct START (learned type)", r and r.get("status") == "ok",
-              str(r))
-        end = time.time() + 10
-        ok = False
-        while time.time() < end:
-            r = cmd_during_scan("CONN STATUS")
-            if r and r.get("state") == "active":
-                ok = True
-                break
-            time.sleep(0.5)
-        if ok:
-            check("C2 direct reconnect", True)
-        else:
-            r = cmd_during_scan("CONN STATUS")
-            if r and r.get("connects", 0) >= 2:
-                print("  SKIP  C2 (link reached active then the WinRT peer "
-                      "dropped it — advertisement does not reliably survive "
-                      "a connection cycle on this stack)")
+        if r and r.get("status") == "ok":
+            check("C2 direct START (learned type)", True)
+            end = time.time() + 10
+            ok = False
+            while time.time() < end:
+                r = cmd_during_scan("CONN STATUS")
+                if r and r.get("state") == "active":
+                    ok = True
+                    break
+                time.sleep(0.5)
+            if ok:
+                check("C2 direct reconnect", True)
             else:
-                print("  SKIP  C2 (WinRT peer did not accept the direct "
-                      "reconnect — advertisement likely stopped after the "
-                      "previous connection cycle)")
+                r = cmd_during_scan("CONN STATUS")
+                if r and r.get("connects", 0) >= 2:
+                    print("  SKIP  C2 (link reached active then the WinRT "
+                          "peer dropped it — advertisement does not "
+                          "reliably survive a connection cycle on this "
+                          "stack)")
+                else:
+                    print("  SKIP  C2 (WinRT peer did not accept the direct "
+                          "reconnect — advertisement likely stopped after "
+                          "the previous connection cycle)")
+        else:
+            # The quirk can kill the START itself (-455 unreachable): the
+            # peer stopped advertising after the connection cycle. Same
+            # peer-side cause as the other C2 variants -> informed SKIP.
+            print(f"  SKIP  C2 (direct START rejected: {r} — the WinRT "
+                  "advertisement does not reliably survive a connection "
+                  "cycle on this stack)")
         cmd_during_scan("CONN STOP")
         cmd_during_scan("SCAN STOP")
         time.sleep(1)
