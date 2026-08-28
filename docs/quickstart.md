@@ -97,9 +97,9 @@ y(15 s) ≈ 0.63 green, and `tau_est` within ±30 % of 10.
 ## 5. Trust but verify (~1 min)
 
 ```bat
-python tests\host\test_assistant.py     :: 42 unit tests
+python tests\host\test_assistant.py     :: 49 unit tests
 python tests\host\test_run_case.py      :: 33 unit tests
-python tests\hw\test_ble_conn_hw.py     :: on-device suite (needs COM12)
+python tests\hw\run_all_hw.py           :: the whole on-device battery, one command
 ```
 
 Evidence transcripts for every claim above live in
