@@ -164,6 +164,36 @@ static bool s_conn_key_is(const uint8_t *p, uint16_t i, uint16_t end,
 }
 
 /*
+ * Validate a JSON escape sequence whose escape character is p[i]
+ * (p[i-1] was the backslash). Returns the extra bytes consumed after
+ * the escape character (0 for simple escapes, 4 for \uXXXX), or -1
+ * when the escape is invalid. Merged members are copied VERBATIM, so
+ * an invalid escape (e.g. \x from a non-JSON payload) or a raw control
+ * byte must abort the merge and fall back to wrapping, which escapes
+ * everything safely (found by test_fuzz, 2026-08-29).
+ */
+static int s_conn_escape_len(const uint8_t *p, uint16_t i, uint16_t end)
+{
+    uint8_t c = p[i];
+    if (c == '"' || c == '\\' || c == '/' || c == 'b' || c == 'f' ||
+        c == 'n' || c == 'r' || c == 't') {
+        return 0;
+    }
+    if (c == 'u') {
+        if (i + 4 >= end) return -1;      /* need 4 hex digits in range */
+        for (int k = 1; k <= 4; k++) {
+            uint8_t h = p[i + k];
+            if (!((h >= '0' && h <= '9') || (h >= 'a' && h <= 'f') ||
+                  (h >= 'A' && h <= 'F'))) {
+                return -1;
+            }
+        }
+        return 4;
+    }
+    return -1;
+}
+
+/*
  * Append one top-level member (key through value end) to the output,
  * unless its key collides with an envelope key (envelope wins, review Q3).
  * The member scanner validates the shape "string":value as it goes; any
@@ -179,9 +209,16 @@ static int s_conn_append_member(conn_wr_t *w, const uint8_t *p,
     bool in_str = true, esc = false;
     while (i < val_end) {
         uint8_t c = p[i];
-        if (esc) esc = false;
-        else if (c == '\\') esc = true;
-        else if (c == '"') { in_str = false; i++; break; }
+        if (esc) {
+            int elen = s_conn_escape_len(p, i, val_end);
+            if (elen < 0) return -1;
+            i = (uint16_t)(i + 1 + elen);
+            esc = false;
+            continue;
+        }
+        if (c == '\\') { esc = true; i++; continue; }
+        if (c == '"') { in_str = false; i++; break; }
+        if (c < 0x20) return -1;          /* raw control char */
         i++;
     }
     if (in_str) return -1;                  /* unterminated key */
@@ -198,9 +235,16 @@ static int s_conn_append_member(conn_wr_t *w, const uint8_t *p,
         in_str = true; esc = false;
         while (i < val_end) {
             uint8_t c = p[i];
-            if (esc) esc = false;
-            else if (c == '\\') esc = true;
-            else if (c == '"') { i++; in_str = false; break; }
+            if (esc) {
+                int elen = s_conn_escape_len(p, i, val_end);
+                if (elen < 0) return -1;
+                i = (uint16_t)(i + 1 + elen);
+                esc = false;
+                continue;
+            }
+            if (c == '\\') { esc = true; i++; continue; }
+            if (c == '"') { i++; in_str = false; break; }
+            if (c < 0x20) return -1;
             i++;
         }
         if (in_str) return -1;
@@ -210,9 +254,16 @@ static int s_conn_append_member(conn_wr_t *w, const uint8_t *p,
         while (i < val_end) {
             uint8_t c = p[i];
             if (in_str) {
-                if (esc) esc = false;
-                else if (c == '\\') esc = true;
-                else if (c == '"') in_str = false;
+                if (esc) {
+                    int elen = s_conn_escape_len(p, i, val_end);
+                    if (elen < 0) return -1;
+                    i = (uint16_t)(i + 1 + elen);
+                    esc = false;
+                    continue;
+                }
+                if (c == '\\') { esc = true; i++; continue; }
+                if (c == '"') in_str = false;
+                else if (c < 0x20) return -1;
             } else if (c == '"') in_str = true;
             else if (c == open) depth++;
             else if (c == close) {
@@ -265,6 +316,13 @@ static bool s_conn_write_data_value(conn_wr_t *w,
     body.cap = (uint16_t)(w->cap - 3);
 
     s_wr_str(&body, ",\"data\":\"");
+    /* The closing quote is only constructible when the opening was
+     * written: if the body overflowed before/at the opening (tight
+     * trunc-path caps) an unconditional quote dangles after
+     * "trunc":true; if the body truncated MID-payload the staged
+     * budget (payload stops at cap-4) always leaves room for it
+     * (both directions found by test_fuzz, 2026-08-29). */
+    bool opened = !body.overflow;
     uint16_t i = 0;
     for (; i < len; i++) {
         uint8_t c = p[i];
@@ -290,7 +348,9 @@ static bool s_conn_write_data_value(conn_wr_t *w,
     conn_wr_t quote = *w;
     quote.cap = (uint16_t)(w->cap - 2);
     quote.pos = body.pos;                   /* budget stop is controlled */
-    s_wr_str(&quote, "\"");                 /* fits by construction */
+    if (opened) {
+        s_wr_str(&quote, "\"");             /* fits by construction */
+    }
     w->pos = quote.pos;
     w->overflow = quote.overflow;
     return all;
@@ -315,6 +375,13 @@ int json_encode_conn(const char *addr_str, uint32_t ts_ms,
     s_wr_str(&w, ",\"addr\":\"");
     s_wr_str(&w, addr_str);
     s_wr_str(&w, "\",\"src\":\"conn\"");
+    /* The envelope is the floor: if it did not fit, no fallback can
+     * yield valid JSON. The trunc path used to splice ,"trunc":true
+     * into a half-written envelope and still return 0 (found by
+     * test_fuzz probing cap-1/cap/cap+1, 2026-08-29). */
+    if (w.overflow) {
+        return -203;
+    }
 
     /* Merge attempt: payload is a JSON object */
     uint16_t body_start = 0, body_end = 0;
@@ -552,7 +619,10 @@ static int s_encode_string_escaped(char *buf, uint16_t buf_len, const char *str)
         else if (c == '\b') { esc = "\\b"; }
         else if (c == '\f') { esc = "\\f"; }
         else if (c < 0x20) {
-            snprintf(esc_buf, sizeof(esc_buf), "\\u%02X", c);
+            /* JSON \u escapes are exactly 4 hex digits (RFC 8259) —
+             * %02X emitted 2-digit escapes that made the whole line
+             * unparseable (found by test_fuzz, 2026-08-29). */
+            snprintf(esc_buf, sizeof(esc_buf), "\\u%04X", c);
             esc = esc_buf;
         }
 

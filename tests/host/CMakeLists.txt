@@ -27,6 +27,8 @@ set(TEST_CLI    ${CMAKE_CURRENT_SOURCE_DIR}/test_cli.c)
 set(TEST_BRIDGE ${CMAKE_CURRENT_SOURCE_DIR}/test_bridge.c)
 set(TEST_POOL   ${CMAKE_CURRENT_SOURCE_DIR}/test_lua_pool.c)
 set(TEST_CONN   ${CMAKE_CURRENT_SOURCE_DIR}/test_ble_conn.c)
+set(TEST_RESP   ${CMAKE_CURRENT_SOURCE_DIR}/test_cli_responses.c)
+set(TEST_FUZZ   ${CMAKE_CURRENT_SOURCE_DIR}/test_fuzz.c)
 
 add_executable(test_runner
     ${TEST_MAIN}
@@ -37,6 +39,8 @@ add_executable(test_runner
     ${TEST_BRIDGE}
     ${TEST_POOL}
     ${TEST_CONN}
+    ${TEST_RESP}
+    ${TEST_FUZZ}
     ${SRC_PROTO}
     ${SRC_JSON}
     ${SRC_FILTER}

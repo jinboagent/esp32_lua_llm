@@ -207,7 +207,9 @@ void test_json_encode_name_control_char(void)
     int ret = json_encode_adv(&r, buf, sizeof(buf), NULL);
 
     TEST_ASSERT_EQUAL_INT(0, ret);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"name\":\"A\\u01B\""));  /* \u01 = uppercase hex */
+    /* 4 hex digits, uppercase (RFC 8259; the 2-digit \u01 form was
+     * invalid JSON — found by test_fuzz, fixed 2026-08-29) */
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"name\":\"A\\u0001B\""));
 }
 
 /* --- TC-14: Name with backslash (B1 fix) --- */
