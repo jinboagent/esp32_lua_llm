@@ -22,6 +22,15 @@
  *    resumed once the link exists or the attempt fails — the user never
  *    loses the scan for longer than the connect handshake.
  *
+ * Discovery fixes (2026-08-28): NimBLE calls GATT discovery callbacks
+ * once per record with error->status == 0 — the error struct is never
+ * NULL (ble_gattc_error() in ble_gattc.c) — then once more with
+ * BLE_HS_EDONE. The old "error != NULL" checks mistook every arriving
+ * record for a failure and tore the link down on the FIRST service
+ * found, so the GATT data path never worked against any peer. By-UUID
+ * service discovery is tried first; on a genuine error or no match,
+ * fall back to full discovery and match the UUID locally.
+ *
  * Zero dynamic allocation outside FreeRTOS queue/task creation (same
  * policy as the scan/pipeline siblings).
  */
@@ -120,6 +129,8 @@ static uint32_t s_next_poll_ms = 0;
 static int  s_gap_event(struct ble_gap_event *event, void *arg);
 static int  s_svc_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
                           const struct ble_gatt_svc *svc, void *arg);
+static int  s_all_svc_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
+                              const struct ble_gatt_svc *svc, void *arg);
 static int  s_chr_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
                           const struct ble_gatt_chr *chr, void *arg);
 static int  s_dsc_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
@@ -349,20 +360,66 @@ static void s_fail_no_conn(int code)
 
 /* ---- GATT procedure callbacks (host task) ------------------------------ */
 
+/* Char discovery over the found service's handle range (shared by the
+ * by-UUID and full-discovery paths). */
+static int s_start_chr_disc(void)
+{
+    return ble_gattc_disc_all_chrs(s_conn_handle, s_svc_start,
+                                   s_svc_end, s_chr_disc_cb, NULL);
+}
+
+/* Full-discovery fallback (2026-08-28 amendment): ATT Find By Type Value
+ * (disc_svc_by_uuid) is not answered usefully by every server — observed
+ * against the Windows GattServiceProvider: connect + MTU succeed, then
+ * the procedure errors and the link used to be torn down. Read By Group
+ * Type (disc_all_svcs) is the request every server answers, so on any
+ * by-UUID failure enumerate all services and match the target locally
+ * before declaring the peer unusable. */
+static int s_all_svc_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
+                             const struct ble_gatt_svc *svc, void *arg)
+{
+    (void)conn; (void)arg;
+    if (error != NULL && error->status == BLE_HS_EDONE) {
+        if (s_svc_found) return s_start_chr_disc();
+        printf("CONN: service not present after full discovery\n");
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);   /* genuinely absent */
+        return 0;
+    }
+    if (error == NULL || error->status != 0 || svc == NULL) {
+        printf("CONN: full discovery error (%d)\n",
+               error != NULL ? error->status : -1);
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
+        return 0;
+    }
+    if (ble_uuid_cmp(&svc->uuid.u, &s_svc_uuid.u) == 0) {
+        s_svc_start = svc->start_handle;
+        s_svc_end = svc->end_handle;
+        s_svc_found = true;
+    }
+    return 0;
+}
+
+static void s_start_full_disc(void)
+{
+    if (ble_gattc_disc_all_svcs(s_conn_handle, s_all_svc_disc_cb, NULL) != 0) {
+        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
+    }
+}
+
 static int s_svc_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
                          const struct ble_gatt_svc *svc, void *arg)
 {
     (void)conn; (void)arg;
     if (error != NULL && error->status == BLE_HS_EDONE) {
-        if (s_svc_found) {
-            return ble_gattc_disc_all_chrs(s_conn_handle, s_svc_start,
-                                           s_svc_end, s_chr_disc_cb, NULL);
-        }
-        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
+        if (s_svc_found) return s_start_chr_disc();
+        printf("CONN: by-UUID discovery matched nothing, full discovery\n");
+        s_start_full_disc();
         return 0;
     }
-    if (error != NULL || svc == NULL) {
-        s_fail_connected(BLE_CONN_ERR_DISCOVERY);
+    if (error == NULL || error->status != 0 || svc == NULL) {
+        printf("CONN: by-UUID discovery error (%d), full discovery\n",
+               error != NULL ? error->status : -1);
+        s_start_full_disc();
         return 0;
     }
     s_svc_start = svc->start_handle;
@@ -392,7 +449,7 @@ static int s_chr_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
         s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
-    if (error != NULL || chr == NULL) {
+    if (error == NULL || error->status != 0 || chr == NULL) {
         s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
@@ -440,7 +497,7 @@ static int s_dsc_disc_cb(uint16_t conn, const struct ble_gatt_error *error,
         s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
-    if (error != NULL || dsc == NULL) {
+    if (error == NULL || error->status != 0 || dsc == NULL) {
         s_fail_connected(BLE_CONN_ERR_DISCOVERY);
         return 0;
     }
@@ -468,7 +525,7 @@ static int s_read_cb(uint16_t conn, const struct ble_gatt_error *error,
                      struct ble_gatt_attr *attr, void *arg)
 {
     (void)conn; (void)arg;
-    if (error != NULL || attr == NULL) {
+    if (error == NULL || error->status != 0 || attr == NULL) {
         xSemaphoreTake(s_mux, portMAX_DELAY);
         s_status.errors++;
         xSemaphoreGive(s_mux);

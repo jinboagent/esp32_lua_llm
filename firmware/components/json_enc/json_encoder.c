@@ -341,8 +341,21 @@ int json_encode_conn(const char *addr_str, uint32_t ts_ms,
                 else if (c == ',' && depth == 0) break;
                 j++;
             }
+            /* Each merged member needs its separating comma — the
+             * envelope ends without one (2026-08-28 fix: merge output
+             * was invalid JSON, e.g. "src":"conn""v":0). Roll the comma
+             * back when the member is skipped for an envelope-key
+             * collision, so no dangling separator remains. */
+            uint16_t pos_before = mw.pos;
+            bool ovf_before = mw.overflow;
+            s_wr_str(&mw, ",");
             int rc = s_conn_append_member(&mw, payload, i, j);
-            if (rc < 0) { merge_ok = false; break; }
+            if (rc == 1) {
+                mw.pos = pos_before;
+                mw.overflow = ovf_before;
+            } else if (rc < 0) {
+                merge_ok = false; break;
+            }
             i = j;
         }
         if (merge_ok && !mw.overflow) {

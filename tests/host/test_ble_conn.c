@@ -38,6 +38,12 @@ static void test_conn_merge_object(void)
                               (const uint8_t *)payload, (uint16_t)strlen(payload),
                               line, sizeof(line), NULL);
     TEST_ASSERT_EQUAL_INT(0, rc);
+    /* exact output — substring checks missed the missing separators
+     * between merged members (invalid JSON, fixed 2026-08-28) */
+    TEST_ASSERT_EQUAL_STRING(
+        "{\"ts\":1234,\"addr\":\"AA:BB:CC:DD:EE:FF\",\"src\":\"conn\","
+        "\"temp\":25.5,\"hum\":40}",
+        line);
     TEST_ASSERT_TRUE(contains(line, "\"src\":\"conn\""));
     TEST_ASSERT_TRUE(contains(line, "\"temp\":25.5"));
     TEST_ASSERT_TRUE(contains(line, "\"hum\":40"));
@@ -56,6 +62,10 @@ static void test_conn_envelope_keys_win(void)
                               (const uint8_t *)payload, (uint16_t)strlen(payload),
                               line, sizeof(line), NULL);
     TEST_ASSERT_EQUAL_INT(0, rc);
+    /* exact output — colliding members skipped, separators still valid */
+    TEST_ASSERT_EQUAL_STRING(
+        "{\"ts\":99,\"addr\":\"AA:BB:CC:DD:EE:FF\",\"src\":\"conn\",\"keep\":7}",
+        line);
     TEST_ASSERT_TRUE(contains(line, "\"ts\":99"));
     TEST_ASSERT_TRUE(contains(line, "\"addr\":\"AA:BB:CC:DD:EE:FF\""));
     TEST_ASSERT_FALSE(contains(line, "fake"));
@@ -91,6 +101,11 @@ static void test_conn_merge_nested_values(void)
                               (const uint8_t *)payload, (uint16_t)strlen(payload),
                               line, sizeof(line), NULL);
     TEST_ASSERT_EQUAL_INT(0, rc);
+    /* exact output — nested values keep their separators too */
+    TEST_ASSERT_EQUAL_STRING(
+        "{\"ts\":1,\"addr\":\"AA:BB:CC:DD:EE:FF\",\"src\":\"conn\","
+        "\"o\":{\"x\":1},\"arr\":[1,2],\"b\":true,\"n\":null}",
+        line);
     TEST_ASSERT_TRUE(contains(line, "\"o\":{\"x\":1}"));
     TEST_ASSERT_TRUE(contains(line, "\"arr\":[1,2]"));
     TEST_ASSERT_TRUE(contains(line, "\"b\":true"));
