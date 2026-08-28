@@ -30,6 +30,13 @@
   end-to-end
 - **Master is the F2.4 product line** (adoption 2026-08-23); history:
   [`status-2026-08-22-improvement-pass.md`](status-2026-08-22-improvement-pass.md)
+- **Docs refresh (2026-08-28, same day)**: `CLAUDE.md` rewritten for
+  stage 5 (tools table, rules, build recipes incl. the Git-Bash idf.py
+  invocation); README status → v1.1.0 with the current test inventory;
+  **new** `docs/quickstart.md` (10-minute path) and
+  `harness/01-features/stage5-host/README.md` (which-tool-when +
+  shared host-tool conventions); build_environment.md gained the
+  Git-Bash build section
 - **Open**: F2.4 backlog (firmware-side CONN STOP settle; strict-JSON
   sweep over CLI responses); `read_only` case next; optional `v1.1.0`
   stage-5 tag
