@@ -336,8 +336,23 @@ t0 = time.monotonic()   # read_provider clock base (module import time is
 
 # ---- Serial + LLM helpers (house conventions, self-contained copies) -------
 
+def expected_cmd(line):
+    """Response 'cmd' field for a CLI command line ('CONN TARGET x' ->
+    'conn_target'); None when unknown. cmd_json matches responses by
+    this so a stale status line from a previous exchange can never
+    satisfy the wrong command (2026-08-28 stale-line lesson)."""
+    words = line.split()
+    if len(words) >= 2 and words[0] in ("SCAN", "CONN", "SCRIPT", "POWER"):
+        return (words[0] + "_" + words[1]).lower()
+    if words and words[0] in ("STATUS", "VERSION"):
+        return words[0].lower()
+    return None
+
+
 def cmd_json(s, line, timeout=4.0):
-    """Send one CLI command; return the parsed JSON status response."""
+    """Send one CLI command; return the parsed JSON status response,
+    matched by its cmd field to the command issued."""
+    want = expected_cmd(line)
     s.reset_input_buffer()
     s.write((line + "\n").encode())
     s.flush()
@@ -349,9 +364,12 @@ def cmd_json(s, line, timeout=4.0):
         txt = raw.decode(errors="replace").strip()
         if txt.startswith("{") and '"status"' in txt:
             try:
-                return json.loads(txt)
+                obj = json.loads(txt)
             except json.JSONDecodeError:
-                pass
+                continue
+            if isinstance(obj, dict) and "status" in obj and (
+                    want is None or obj.get("cmd") == want):
+                return obj
     return None
 
 

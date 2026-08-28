@@ -1,0 +1,15 @@
+{"ts":39451,"addr":"D2:C2:8A:57:C3:35","type":"random","rssi":-42,"name":null,"uuids":[],"manu":{"id":"0006","data":"010920028A750723AB3AC91EE80B4BBDA71D817E160E9D3535D47A"}}
+{"ts":39491,"addr":"DC:A3:DE:25:3B:E6","type":"random","rssi":-95,"name":null,"uuids":[],"manu":{"id":"0087","data":"086E"},"flags":"06"}
+{"ts":39761,"addr":"4E:9B:07:56:86:60","type":"random","rssi":-98,"name":null,"uuids":[],"manu":{"id":"004C","data":"16080009B3A51D61B104"},"flags":"1A"}
+{"ts":57814,"addr":"E9:E7:0F:F6:B2:45","src":"conn","t":0.5,"u":0.0,"y":0.0}
+{"ts":57815,"addr":"E9:E7:0F:F6:B2:45","src":"conn","t":1.5,"u":1.0,"y":0.1}
+{"status":"ok","cmd":"status","state":"scanning","scanning":true,"v":1}
+{"status":"error","cmd":"conn_stop","code":-453}
+{"status":"error","cmd":"script_stop","code":-911,"msg":"invalid state: no script running"}
+> CONN STOP
+BLE: passive scan started (interval=100ms, window=50ms)
+Pipeline: started
+{not json
+{"status":"ok","cmd":"conn_target","svc":"12345678-1234-1234-1234-123456789abc","chr":"12345678-1234-1234-1234-123456789a01}
+[0;32m I (56676) NimBLE: GAP procedure initiated: discovery; [0m
+[0;32m I (56677) NimBLE: own_addr_type=0 filter_policy=0 passive=1[0m

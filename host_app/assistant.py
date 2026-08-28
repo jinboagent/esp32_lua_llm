@@ -502,9 +502,25 @@ def describe_resp(r):
     return json.dumps(r, separators=(",", ":"))
 
 
+def expected_cmd(line):
+    """Response 'cmd' field for a CLI command line ('CONN TARGET x' ->
+    'conn_target'); None when unknown. Readers match responses by this
+    so a stale status line from a previous command can never satisfy
+    the wrong exchange (the 2026-08-28 stale-line lesson, applied to
+    the host tools after the golden-fixture test tripped it)."""
+    words = line.split()
+    if len(words) >= 2 and words[0] in ("SCAN", "CONN", "SCRIPT", "POWER"):
+        return (words[0] + "_" + words[1]).lower()
+    if words and words[0] in ("STATUS", "VERSION"):
+        return words[0].lower()
+    return None
+
+
 def cmd_json(s, line, buf=None, timeout=4.0):
     """Send one CLI command; return the parsed JSON status response.
-    Lines seen while waiting are fed to the device buffer."""
+    Lines seen while waiting are fed to the device buffer. Responses
+    are matched by their cmd field to the command issued."""
+    want = expected_cmd(line)
     s.reset_input_buffer()
     s.write((line + "\n").encode())
     s.flush()
@@ -520,9 +536,12 @@ def cmd_json(s, line, buf=None, timeout=4.0):
             buf.add_line(txt)
         if txt.startswith("{") and '"status"' in txt:
             try:
-                return json.loads(txt)
+                obj = json.loads(txt)
             except (json.JSONDecodeError, ValueError):
-                pass
+                continue
+            if isinstance(obj, dict) and "status" in obj and (
+                    want is None or obj.get("cmd") == want):
+                return obj
     return None
 
 
@@ -953,6 +972,7 @@ class Session:
     def run(self):
         self.banner()
         self.reader.begin_prompt()
+        reason = "exit"
         try:
             while True:
                 drain_serial(self.s, 0.05, self.buf)
@@ -973,9 +993,9 @@ class Session:
                 drain_serial(self.s, 0.8, self.buf)
                 self.reader.begin_prompt()
         except KeyboardInterrupt:
-            pass
+            reason = "interrupted"
         finally:
-            self.cleanup("exit")
+            self.cleanup(reason)
         return 0
 
 

@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import unittest
+import collections
 import unittest.mock
 from collections import deque
 
@@ -484,6 +485,202 @@ class BasePathHealTests(unittest.TestCase):
                 side_effect=RuntimeError("LLM HTTP 500: oops")):
             with self.assertRaises(RuntimeError):
                 assistant.llm_chat(cfg, [])
+
+
+class GoldenTranscriptTests(unittest.TestCase):
+    """Real-world line shapes from the 2026-08-28 sessions, frozen as a
+    fixture: adv/conn JSON, CLI echoes, boot logs, ANSI-wrapped NimBLE
+    logs, garbage, and the historical malformed TARGET response. The
+    buffer must classify every one correctly and never crash."""
+
+    FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fixtures", "device_stream_sample.txt")
+
+    def setUp(self):
+        with open(self.FIXTURE, encoding="utf-8") as f:
+            self.lines = [l.rstrip("\n") for l in f if l.strip()]
+
+    def test_classification_counts(self):
+        b = assistant.DeviceBuffer()
+        kinds = [b.add_line(l) for l in self.lines]
+        self.assertEqual(b.adv and sum(k == "adv" for k in kinds), 3)
+        self.assertEqual(sum(k == "conn" for k in kinds), 2)
+        self.assertEqual(sum(k == "resp" for k in kinds), 3)
+        # dropped: echo, 2 boot logs, garbage, malformed target, 2 ANSI
+        self.assertEqual(b.dropped, 7)
+
+    def test_malformed_target_never_enters_a_plane(self):
+        b = assistant.DeviceBuffer()
+        for l in self.lines:
+            b.add_line(l)
+        addrs = {a.get("addr") for a in b.adv}
+        self.assertNotIn("12345678-1234-1234-1234-123456789abc", addrs)
+        self.assertFalse(any("conn_target" in json.dumps(c)
+                             for c in b.conn))
+
+    def test_snapshot_from_real_stream(self):
+        b = assistant.DeviceBuffer()
+        for l in self.lines:
+            b.add_line(l)
+        snap = b.snapshot()
+        self.assertEqual(b.conn[0]["src"], "conn")     # classified
+        self.assertIn("conn lines (analysis only)", snap)
+        self.assertIn("7 invalid dropped", snap)
+
+    def test_cmd_json_over_device_sim(self):
+        """The reader used by every command exchange against the same
+        fixture stream: returns the status line for the command issued,
+        tolerating all the noise around it."""
+        import collections
+        q = collections.deque(l.encode() for l in self.lines)
+
+        class Sim:
+            timeout = 1
+
+            def reset_input_buffer(self):
+                pass
+
+            def write(self, b):
+                pass
+
+            def flush(self):
+                pass
+
+            def readline(self):
+                return q.popleft() if q else b""
+
+        r = assistant.cmd_json(Sim(), "CONN STOP")
+        self.assertEqual(r.get("cmd"), "conn_stop")
+        self.assertEqual(r.get("code"), -453)
+
+
+class DeviceSimSerial:
+    """Models the dongle's console for full-REPL tests: a map from
+    command text -> response lines (echo + JSON); reset_input_buffer
+    drops pending output like the real port; readline pops or times
+    out empty. Records every line written for cleanup assertions."""
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.pending = collections.deque()
+        self.written = []
+        self.timeout = 1
+        self.closed = False
+
+    def write(self, b):
+        text = b.decode().strip()
+        self.written.append(text)
+        self.pending.extend(self.responses.get(text, []))
+
+    def flush(self):
+        pass
+
+    def reset_input_buffer(self):
+        self.pending.clear()
+
+    def readline(self):
+        return self.pending.popleft() if self.pending else b""
+
+    def close(self):
+        self.closed = True
+
+
+class ReplLoopTests(unittest.TestCase):
+    """The message-Prompt loop itself (previously only its pure
+    fragments were unit-tested — the 2026-08-28 tick-units bug lived
+    exactly in that gap, on the H5.2 side). Runs whole sessions against
+    a DeviceSimSerial with piped stdin; the tee log is read back for
+    assertions."""
+
+    STATUS_IDLE = ('{"status":"ok","cmd":"status","state":"idle",'
+                   '"scanning":false,"v":1}\n').encode()
+    SCAN_START = ('{"status":"ok","cmd":"scan_start"}\n').encode()
+    SCRIPT_STOP = ('{"status":"error","cmd":"script_stop","code":-911,'
+                   '"msg":"invalid state: no script running"}\n').encode()
+    SCAN_STOP = ('{"status":"ok","cmd":"scan_stop"}\n').encode()
+    CONN_STOP = ('{"status":"error","cmd":"conn_stop","code":-453}\n'
+                 ).encode()
+
+    def responses(self):
+        return {
+            "STATUS": [self.STATUS_IDLE],
+            "SCAN START": [self.SCAN_START],
+            "SCRIPT STOP": [self.SCRIPT_STOP],
+            "SCAN STOP": [self.SCAN_STOP],
+            "CONN STOP": [self.CONN_STOP],
+        }
+
+    def run_session(self, user_lines, sim, no_llm=True, cfg=None,
+                    llm_replies=None):
+        import io
+        import tempfile
+        cwd = os.getcwd()
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(tmp)                       # tee logs land in tmp
+        stdin = io.StringIO("".join(l + "\n" for l in user_lines))
+        with unittest.mock.patch("sys.stdin", new=stdin), \
+             unittest.mock.patch.object(assistant.serial, "Serial",
+                                        return_value=sim):
+            sess = assistant.Session("COMTEST", no_llm=no_llm)
+            if cfg is not None:
+                sess.cfg = cfg
+                sess.cfg_from_env = False
+            if llm_replies is not None:
+                it = iter(llm_replies)
+                unittest.mock.patch.object(
+                    assistant, "llm_chat",
+                    side_effect=lambda *a, **k: next(it)).start()
+                self.addCleanup(unittest.mock.patch.stopall)
+            rc = sess.run()
+        logs = [f for f in os.listdir(tmp) if f.endswith(".log")]
+        self.assertEqual(len(logs), 1, "exactly one tee transcript")
+        with open(os.path.join(tmp, logs[0]), encoding="utf-8") as f:
+            return rc, f.read()
+
+    def test_full_no_llm_session(self):
+        sim = DeviceSimSerial(self.responses())
+        rc, log = self.run_session(
+            ["/help", "/scan on", "hello there", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("you: /help", log)
+        self.assertIn("commands:", log)
+        self.assertIn("(scan started", log)
+        self.assertIn("--no-llm mode - the prompt was NOT sent", log)
+        self.assertIn("transcript saved:", log)
+        self.assertIn("(exit - cleaning up)", log)
+        # cleanup order on the wire: SCRIPT STOP, SCAN STOP, CONN STOP
+        tail = [w for w in sim.written if w in
+                ("SCRIPT STOP", "SCAN STOP", "CONN STOP")][-3:]
+        self.assertEqual(tail,
+                         ["SCRIPT STOP", "SCAN STOP", "CONN STOP"])
+        self.assertTrue(sim.closed)          # N3: close only at exit
+
+    def test_keyboard_interrupt_cleans_up(self):
+        sim = DeviceSimSerial(self.responses())
+        with unittest.mock.patch.object(
+                assistant.Session, "handle_line",
+                side_effect=KeyboardInterrupt):
+            rc, log = self.run_session(["whatever"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("(interrupted - cleaning up)", log)
+        self.assertEqual(
+            [w for w in sim.written if w.endswith("STOP")],
+            ["SCRIPT STOP", "SCAN STOP", "CONN STOP"])
+        self.assertTrue(sim.closed)
+
+    def test_free_text_routes_envelope_in_loop(self):
+        sim = DeviceSimSerial(self.responses())
+        rc, log = self.run_session(
+            ["summarize", "/quit"], sim, no_llm=False,
+            cfg={"base": "https://x/v1", "key": "k", "model": "stub"},
+            llm_replies=['{"type":"answer","text":"all good"}'])
+        self.assertEqual(rc, 0)
+        self.assertIn("(asking stub", log)
+        self.assertIn("llm: all good", log)
+        # the turn entered history (visible via /history transcript not
+        # requested here; assert via a second turn seeing the first)
+        self.assertIn("you: summarize", log)
 
 
 class FeatureOffTests(unittest.TestCase):
