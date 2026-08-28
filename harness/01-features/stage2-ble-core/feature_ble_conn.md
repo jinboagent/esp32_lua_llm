@@ -119,14 +119,15 @@ additive `"conn"` object; `CONN STATUS` carries the full counters.
 | AC-6 | State matrix incl. -911 in SCRIPT_RUNNING | host suite |
 | AC-7 | Ctrl+C aborts search/connect and disconnects | C0 |
 | AC-8 | Power hold OR-ed (scan stop does not drop conn hold) | design + POWER STATUS while connected |
-| AC-9 | GATT path (subscribe/notify/poll/disconnect) | **OPEN — needs a peer** (C1-C6): second ESP32 or nRF Connect phone; WinRT GATT server unavailable on the current PC |
+| AC-9 | GATT path (subscribe/notify/poll/disconnect) | **CLOSED 2026-08-28** — C1-C6 green against the PC WinRT GATT peer (43/0), plus the H5.2 plant demo: 60/60 conn lines end-to-end with ground truth. The external temperature-sensor pilot is dropped (product-owner decision, 2026-08-29); a phone/nRF Connect peer remains an optional manual variant, not a gap |
 
 ## 7. Open Items
 
-1. **C1–C6 HIL** (real GATT peer): auto-connect + notify stream, direct
-   connect, CONN STOP, peer-vanish, poll fallback, MTU >23 B payload.
-   The pvvx/ATC temperature-sensor pilot (docs/usecase-pilot-*.md) is the
-   intended first real peer and closes this gap.
+1. **C1–C6 HIL**: CLOSED 2026-08-28 — the PC WinRT GATT peer proved the
+   full path (fix report docs/fix-gatt-data-path-2026-08-28.md; hw suite
+   43/0, later 65/0 with the C7 state matrix). The planned external
+   temperature-sensor pilot is dropped (product-owner decision,
+   2026-08-29) — no external-sensor gap remains open.
 2. Indication acks are treated like notifications (no ack wait) — fine for
    telemetry; revisit if a peer requires confirmed indications.
 3. Binary payloads ≥0x80 pass through unvalidated UTF-8 in wrap mode
@@ -153,5 +154,4 @@ absorbed the best of variant A and fixed the nits found in B:
   into this branch's suite (skips where the API is unavailable).
 
 Re-verified after the pass: host 108/108 · C0 29/29 · regressions
-32/14/45/11 · on/off builds clean. AC-9 remains open (needs a real peer);
-the ported C1–C6 tier runs it automatically wherever WinRT works.
+32/14/45/11 · on/off builds clean. AC-9 closed 2026-08-28 (see above).

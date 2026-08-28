@@ -1,0 +1,5 @@
+{"t": 0.0, "conn": {"state": "active", "connects": 1, "disconnects": 0, "rx_notify": 1, "rx_read": 0, "tx_lines": 1, "dropped": 0, "errors": 0}, "heap": null, "pool": null}
+{"t": 20.2, "conn": {"state": "active", "connects": 1, "disconnects": 0, "rx_notify": 18, "rx_read": 0, "tx_lines": 18, "dropped": 0, "errors": 0}, "heap": 106912, "pool": {"used": 11816, "peak": 11844}}
+{"t": 42.4, "conn": {"state": "active", "connects": 2, "disconnects": 1, "rx_notify": 40, "rx_read": 0, "tx_lines": 40, "dropped": 0, "errors": 0}, "heap": 106912, "pool": {"used": 11816, "peak": 11844}}
+{"t": 60.2, "conn": {"state": "active", "connects": 2, "disconnects": 1, "rx_notify": 59, "rx_read": 0, "tx_lines": 59, "dropped": 0, "errors": 0}, "heap": 106912, "pool": {"used": 11816, "peak": 11844}}
+{"t": 81.7, "conn": {"state": "active", "connects": 3, "disconnects": 2, "rx_notify": 80, "rx_read": 0, "tx_lines": 80, "dropped": 0, "errors": 0}, "heap": 106912, "pool": {"used": 11816, "peak": 11844}}

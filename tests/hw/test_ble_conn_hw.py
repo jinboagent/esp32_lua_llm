@@ -479,6 +479,23 @@ if peer is not None:
     if peer_addr:                            # C2 direct by learned address
         r = cmd_during_scan("SCAN START")
         r = cmd_during_scan(f"CONN START {peer_addr}")
+        if not (r and r.get("status") == "ok") and peer is not None:
+            # -455 unreachable: the WinRT advertisement often dies with
+            # the previous connection cycle. One peer restart brings it
+            # back — retry once before classifying as the known quirk.
+            print("  (C2: direct START rejected — restarting the peer "
+                  "for one retry)")
+            try:
+                peer.stop()
+            except Exception:
+                pass
+            try:
+                peer = GattPeer()
+                peer.start()
+                time.sleep(1.0)
+                r = cmd_during_scan(f"CONN START {peer_addr}")
+            except Exception as e:
+                print(f"  (C2: peer restart failed: {e!r})")
         if r and r.get("status") == "ok":
             check("C2 direct START (learned type)", True)
             end = time.time() + 10
@@ -546,6 +563,93 @@ if peer is not None:
         peer.stop()
     cmd("CONN STOP")
     cmd("SCAN STOP")
+
+# --- C7: CLI state matrix (observed-state assertions, no peer needed) -------
+# Walks idle -> scanning -> script loaded -> script running and asserts
+# every command's response AND the resulting observed state (STATUS /
+# CONN STATUS), not just the return value — the 2026-08-28 lesson:
+# "STOP returned ok" is not "state is off". The script upload uses the
+# F4.2 bridge protocol (LOAD + paced text lines + END) exactly as the
+# host tools drive it.
+def load_ok_script():
+    r = cmd_during_scan("SCRIPT LOAD")
+    ok = bool(r and r.get("status") == "ok")
+    for line in ("function on_adv(a, t, rssi, name, uuids, mi, md)",
+                 "  return true",
+                 "end"):
+        s.write((line + "\n").encode())
+        s.flush()
+        time.sleep(0.05)
+    time.sleep(0.3)
+    r = cmd_during_scan("SCRIPT END")
+    return ok and bool(r and r.get("status") == "ok")
+
+def obs_cli_state():
+    r = cmd_during_scan("STATUS")
+    return r.get("state") if r else None
+
+def obs_conn_state():
+    r = cmd_during_scan("CONN STATUS")
+    return r.get("state") if r else None
+
+cmd("SCRIPT STOP")
+cmd("CONN STOP"); wait_conn_off()
+cmd("SCAN STOP")
+
+check("C7 boot: cli idle, conn off",
+      obs_cli_state() == "idle" and obs_conn_state() == "off")
+
+r = cmd_during_scan("CONN TARGET 180F 2A6E")
+check("C7 idle: TARGET allowed", r and r.get("status") == "ok", str(r))
+r = cmd_during_scan("CONN INTERVAL 500")
+check("C7 idle: INTERVAL allowed", r and r.get("status") == "ok", str(r))
+r = cmd_during_scan("CONN STATUS")
+check("C7 idle: conn still off (TARGET/INTERVAL do not connect)",
+      r and r.get("state") == "off", str(r))
+
+r = cmd_during_scan("SCAN START")
+check("C7 -> scanning", r and r.get("status") == "ok", str(r))
+check("C7 scanning observed", obs_cli_state() == "scanning")
+r = cmd_during_scan("CONN TARGET 180F 2A6E")
+check("C7 scanning: TARGET composes", r and r.get("status") == "ok",
+      str(r))
+
+check("C7 -> script loaded (bridge protocol)", load_ok_script())
+r = cmd_during_scan("SCRIPT RUN")
+check("C7 -> script running", r and r.get("status") == "ok", str(r))
+check("C7 running observed", obs_cli_state() == "script_running")
+
+r = cmd_during_scan("CONN TARGET 180F 2A6E")
+check("C7 running: TARGET -> -911",
+      r and r.get("code") == -911, str(r))
+r = cmd_during_scan("CONN START")
+check("C7 running: START -> -911",
+      r and r.get("code") == -911, str(r))
+r = cmd_during_scan("CONN INTERVAL 600")
+check("C7 running: INTERVAL -> -911",
+      r and r.get("code") == -911, str(r))
+r = cmd_during_scan("SCAN STOP")
+check("C7 running: SCAN STOP -> -911",
+      r and r.get("code") == -911, str(r))
+r = cmd_during_scan("CONN STATUS")
+check("C7 running: STATUS stays allowed", r and r.get("state") == "off",
+      str(r))
+r = cmd_during_scan("CONN STOP")
+check("C7 running: STOP stays allowed", r and r.get("cmd") == "conn_stop",
+      str(r))
+r = cmd_during_scan("SCRIPT RUN")
+check("C7 running: RUN again -> -911",
+      r and r.get("code") == -911, str(r))
+
+r = cmd_during_scan("SCRIPT STOP")
+check("C7 SCRIPT STOP ok", r and r.get("status") == "ok", str(r))
+check("C7 back to scanning observed", obs_cli_state() == "scanning")
+r = cmd_during_scan("SCRIPT STOP")
+check("C7 SCRIPT STOP when idle -> -911",
+      r and r.get("code") == -911, str(r))
+r = cmd_during_scan("SCAN STOP")
+check("C7 -> idle", r and r.get("status") == "ok", str(r))
+check("C7 idle observed", obs_cli_state() == "idle")
 
 s.close()
 print(f"\n{PASS} passed, {FAIL} failed")

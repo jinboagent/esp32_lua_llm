@@ -43,7 +43,32 @@
   PASS  C5 responsive after burst
   PASS  C5 rx_notify counted
   PASS  C5 STOP ok
+  (C2: direct START rejected — restarting the peer for one retry)
+  [peer] advertisement status -> 3
+  [peer] advertisement status -> 2
   SKIP  C2 (direct START rejected: {'status': 'error', 'cmd': 'conn_start', 'code': -455} — the WinRT advertisement does not reliably survive a connection cycle on this stack)
   SKIP  C6 (link supervision longer than window)
+  PASS  C7 boot: cli idle, conn off
+  PASS  C7 idle: TARGET allowed
+  PASS  C7 idle: INTERVAL allowed
+  PASS  C7 idle: conn still off (TARGET/INTERVAL do not connect)
+  PASS  C7 -> scanning
+  PASS  C7 scanning observed
+  PASS  C7 scanning: TARGET composes
+  PASS  C7 -> script loaded (bridge protocol)
+  PASS  C7 -> script running
+  PASS  C7 running observed
+  PASS  C7 running: TARGET -> -911
+  PASS  C7 running: START -> -911
+  PASS  C7 running: INTERVAL -> -911
+  PASS  C7 running: SCAN STOP -> -911
+  PASS  C7 running: STATUS stays allowed
+  PASS  C7 running: STOP stays allowed
+  PASS  C7 running: RUN again -> -911
+  PASS  C7 SCRIPT STOP ok
+  PASS  C7 back to scanning observed
+  PASS  C7 SCRIPT STOP when idle -> -911
+  PASS  C7 -> idle
+  PASS  C7 idle observed
 
-43 passed, 0 failed
+65 passed, 0 failed

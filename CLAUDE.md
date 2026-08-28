@@ -18,7 +18,7 @@ ESP32-S3 passive BLE advertisement scanner → AD parse → C filters → option
 
 - All 13 firmware features (stages 1–4) + F2.4 conn plane + stage-5 host tooling implemented and hardware-verified
 - 2026-08-28: F2.4 GATT data path fixed end-to-end (NimBLE discovery callback dispatch, JSON merge separators, `CONN TARGET` response validity); stage 5 squash-merged
-- Verification inventory: Unity host suite 22/22 · python units 42/42 (assistant) + 33/33 (run_case) · `test_ble_conn_hw.py` 43/0 (2 informed SKIPs) · plant demo 60/60 conn lines, τ_est 9.5 vs 10.0
+- Verification inventory: Unity 126 total (108 unit + response contract 10 + fuzz 8; 76 responses strict-JSON validated) · python units 49/49 (assistant) + 33/33 (run_case) · `test_ble_conn_hw.py` 65/0 (2 informed SKIPs; C7 state matrix included) · plant demo 60/60 conn lines, τ_est 9.5 vs 10.0 · soak_conn smoke green
 - Next candidate work: `read_only` case (dongle poll path — the only data path no case covers), F2.4 backlog (firmware-side CONN STOP settle, strict-JSON sweep over CLI responses), llm_loop `-612` upload blind spot; see `status/LATEST.md`
 
 ## Key Rules
@@ -46,16 +46,23 @@ cmd //c "set MSYSTEM=&& set IDF_PATH=C:\Espressif\frameworks\esp-idf-v5.1&& set 
 # C host tests (Unity; fresh dir, mingw + cmake on PATH)
 export PATH="/c/msys64/mingw64/bin:/c/Espressif/tools/cmake/3.24.0/bin:$PATH"
 cmake -S tests/host -B /tmp/hostbuild -G Ninja && cmake --build /tmp/hostbuild && /tmp/hostbuild/test_runner.exe
+# 116 tests: 6 unit suites + the response contract (every CLI response
+# strict-JSON validated, 76 responses) + fuzz/boundary/scanner corpus
 
 # Python unit tests (host tooling)
-python tests/host/test_assistant.py    # 42
+python tests/host/test_assistant.py    # 49 (incl. golden transcripts + whole REPL sessions)
 python tests/host/test_run_case.py     # 33
 
-# Hardware suites (dongle on COM12)
-python tests/hw/test_ble_conn_hw.py    # F2.4: 43 checks + 2 informed SKIPs
+# Hardware suites (dongle on COM12) — the one-command regression gate:
+python tests/hw/run_all_hw.py          # whole battery + reset-reason gate + transcripts
+# or individually:
+python tests/hw/test_ble_conn_hw.py    # 65 checks (C0 + C1-C6 GATT tier + C7 state matrix)
 python tests/hw/test_ble_lua_hw.py     # BLE+Lua data plane
 python tests/hw/test_bridge_hw.py      # F4.1+F4.2
 python tests/hw/test_power_hw.py       # F4.3
+python tests/hw/soak_conn.py --secs 3600 --reconnect-every 300   # conn soak
+
+# Test docs: tests/README.md (inventory, conventions, evidence rules)
 ```
 
 ## Key Files
