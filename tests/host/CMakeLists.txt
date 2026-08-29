@@ -4,6 +4,15 @@ project(ble_sniffer_tests C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Werror")
 
+# Optional gcov instrumentation: configure with -DENABLE_COVERAGE=ON,
+# run the tests, then read the .gcda/.gcno files (mingw gcov) to find
+# untested error branches. See tests/README.md.
+option(ENABLE_COVERAGE "Build host tests with gcov instrumentation" OFF)
+if(ENABLE_COVERAGE)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g --coverage")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+endif()
+
 # Include paths
 set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(IFACE_DIR ${PROJECT_ROOT}/interfaces)

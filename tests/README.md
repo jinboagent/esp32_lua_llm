@@ -53,6 +53,11 @@ Each new layer closes a gap a real bug walked through:
 
 ## Conventions
 
+- **Coverage on demand**: `cmake -S tests/host -B <dir> -G Ninja
+  -DENABLE_COVERAGE=ON && cmake --build <dir> && <dir>/test_runner.exe`,
+  then read the `.gcda` files (mingw `gcov`) to find untested error
+  branches — evidence-driven test selection instead of guessing.
+
 - **Evidence**: every verification claim references a transcript under
   `harness/02-knowledge/` — nothing is "verified" without one.
 - **Strict JSON everywhere**: `json.loads`-equivalent assertions on
