@@ -187,7 +187,18 @@ class FirstOrderCase(Case):
         return f"u={self.u:.0f} y={self.y:.3f}"
 
 
-CASES = {"first_order": FirstOrderCase}   # append-only registry
+class FirstOrderPollCase(FirstOrderCase):
+    """The designated second case (H5.2 open question 4): identical
+    plant and ground truth, but read_only — the dongle POLLS the
+    characteristic on its CONN INTERVAL instead of subscribing to
+    notifications. Same physics checks apply to the polled lines, so
+    the poll path is held to the same standard as notify."""
+    name = "first_order_poll"
+    read_only = True
+
+
+CASES = {"first_order": FirstOrderCase,          # append-only registry
+         "first_order_poll": FirstOrderPollCase}
 
 
 # ---- PC GATT peer (adapted copy of tests/hw/test_ble_conn_hw.py GattPeer) --
@@ -199,10 +210,14 @@ class GattPeer:
     asyncio/await pattern on a daemon thread (WinRT rejects synchronous
     driving of its async operations with E_ILLEGAL_METHOD_CALL)."""
 
-    def __init__(self, svc_uuid, chr_uuid, read_provider):
+    def __init__(self, svc_uuid, chr_uuid, read_provider,
+                 with_notify=True):
         self._svc = svc_uuid
         self._chr = chr_uuid
         self._read_provider = read_provider   # callable(t) -> bytes
+        self._with_notify = with_notify       # False -> read-only char:
+        # the dongle cannot subscribe and falls back to polling on its
+        # CONN INTERVAL (the read_only case's data path)
         self.provider = None
         self.char = None
         self._adv = {"status": None}
@@ -228,8 +243,10 @@ class GattPeer:
 
         params = GattLocalCharacteristicParameters()
         params.characteristic_properties = (
-            GattCharacteristicProperties.NOTIFY
-            | GattCharacteristicProperties.READ)
+            (GattCharacteristicProperties.NOTIFY
+             | GattCharacteristicProperties.READ)
+            if self._with_notify
+            else GattCharacteristicProperties.READ)
         cres = await self.provider.service.create_characteristic_async(
             pyuuid.UUID(self._chr), params)
         self.char = cres.characteristic
@@ -583,7 +600,8 @@ def run(args):
 
         try:
             t0 = time.monotonic()
-            peer = GattPeer(case.svc_uuid, case.chr_uuid, case.read_value)
+            peer = GattPeer(case.svc_uuid, case.chr_uuid, case.read_value,
+                            with_notify=not case.read_only)
             peer.start()
             time.sleep(1.0)
         except Exception as e:
@@ -625,7 +643,17 @@ def run(args):
             return 0
         print(f"connected to peer {state.get('addr')} "
               f"(mode {state.get('mode')})")
-        if not peer.wait_subscribed(8):
+        if case.read_only:
+            # Poll path: the dongle reads the characteristic on its own
+            # CONN INTERVAL; no CCCD subscription is needed. The peer's
+            # read handler serves case.read_value(t) live.
+            r = cmd_json(s, f"CONN INTERVAL "
+                        f"{int(case.period_s * 1000)}")
+            print(f"poll mode: CONN INTERVAL -> "
+                  f"{r.get('value') if r else r} ms"
+                  if r and r.get("status") == "ok"
+                  else f"poll mode: CONN INTERVAL failed: {r}")
+        elif not peer.wait_subscribed(8):
             print("warning: subscription not confirmed within 8s "
                   "(continuing; notify may still flow)")
         else:
@@ -649,7 +677,10 @@ def run(args):
                         raise RuntimeError(
                             f"payload {len(payload)}B exceeds the "
                             f"{NOTIFY_CAP}B notify cap")
-                    peer.notify(payload)
+                    if not case.read_only:
+                        peer.notify(payload)
+                    # read_only cases still step the plant each tick;
+                    # the dongle pulls the value via GATT reads
                     n_notify += 1
                     next_tick += args.interval
                 # drain one slice

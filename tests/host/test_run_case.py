@@ -122,6 +122,22 @@ class RegistryAndArgsTests(unittest.TestCase):
         self.assertEqual(run_case.CASES["first_order"].name,
                          "first_order")
 
+    def test_poll_case_registered_read_only(self):
+        self.assertIn("first_order_poll", run_case.CASES)
+        self.assertEqual(run_case.CASES["first_order_poll"].name,
+                         "first_order_poll")
+        c = run_case.CASES["first_order_poll"]()
+        c.init(argparse.Namespace(tau=10.0, k=1.0, step_at=5.0))
+        self.assertTrue(c.read_only)
+        self.assertEqual(c.period_s, 1.0)
+        self.assertIn("63.2%", c.ground_truth())
+
+    def test_poll_case_same_physics(self):
+        c = run_case.CASES["first_order_poll"]()
+        c.init(argparse.Namespace(tau=10.0, k=1.0, step_at=5.0))
+        for line, ok in c.check(simulate(c, 60.0)):
+            self.assertTrue(ok, line)
+
     def test_case_flags_join_parser(self):
         c = run_case.CASES["first_order"]()
         p = argparse.ArgumentParser()

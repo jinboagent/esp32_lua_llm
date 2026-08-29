@@ -44,9 +44,13 @@ CASES = {"first_order": FirstOrderCase}       # append-only registry
 ```
 
 A new case = one class + one registry line; the runner lifecycle never
-changes. v1 ships `first_order` (notify path, Euler plant
-`y += (dt/τ)(K·u − y)`, u steps 0→1 at `--step-at`); the designated
-next case is a `read_only` one (the dongle poll path).
+changes. Ships `first_order` (notify path, Euler plant
+`y += (dt/τ)(K·u − y)`, u steps 0→1 at `--step-at`) and
+`first_order_poll` (2026-08-29): identical plant and ground truth
+delivered through the dongle's POLL path — the peer exposes a
+read-only characteristic so the dongle cannot subscribe and polls on
+its CONN INTERVAL; verified live 30/30 lines, mode `poll`, physics
+green.
 
 ### Runner lifecycle
 
@@ -123,7 +127,8 @@ carry the legacy `LLM_*` triple or provider pairs (`DASHSCOPE_*`, then
 
 ## Future Extensions
 
-- `read_only` case (dongle poll path) — designated next case.
+- ~~`read_only` case~~ — SHIPPED 2026-08-29 as `first_order_poll`
+  (live: 30/30 polled lines, mode `poll`, physics green).
 - `--peer external` axis for real sensors (per-case UUIDs already in
   the contract).
 - Convergence refactor with H5.1/H5.3 shared helpers (canonical copy:
