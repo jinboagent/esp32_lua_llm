@@ -61,7 +61,7 @@ STATUS_EVERY_S = 10.0    # live status line cadence
 SESSION_WAIT_S = 15.0    # CONN STATUS poll budget to reach "active"
 NOTIFY_CAP = 253         # payload hard cap (proposal hard rule)
 LLM_MAX_SAMPLE_LINES = 60  # cap constant for the --estimate act
-LLM_TIMEOUT_S = 120
+LLM_TIMEOUT_S = 180
 
 # The test-documented UUID pair (tests/hw/test_ble_conn_hw.py); the case
 # owns its identity — future cases may override these per instance.
@@ -424,6 +424,12 @@ def resolve_llm_config(force_file=False):
         "base": (base or "https://api.openai.com/v1").rstrip("/"),
         "key": key,
         "model": model,
+        # honor QWEN_ENABLE_THINKING=false from the file: thinking
+        # models otherwise burn minutes on tool prompts (observed
+        # 2026-08-29: qwen3.8-27b timed out at 180 s with thinking on)
+        "no_thinking": (os.environ.get("QWEN_ENABLE_THINKING")
+                        or file_env.get("QWEN_ENABLE_THINKING",
+                                       "")).lower() == "false",
     }
 
 
@@ -473,7 +479,7 @@ def parse_estimate(reply):
 
 def _estimate_once(cfg, case, samples):
     """One raw estimate request; never heals."""
-    body = json.dumps({
+    body = {
         "model": cfg["model"],
         "temperature": 0.2,
         "messages": [
@@ -486,7 +492,10 @@ def _estimate_once(cfg, case, samples):
              + "\n".join(json.dumps(x, separators=(",", ":"))
                          for x in samples[:LLM_MAX_SAMPLE_LINES])},
         ],
-    }).encode()
+    }
+    if cfg.get("no_thinking"):
+        body["enable_thinking"] = False
+    body = json.dumps(body).encode()
     req = urllib.request.Request(
         cfg["base"] + "/chat/completions", data=body,
         headers={"Content-Type": "application/json",
@@ -499,6 +508,8 @@ def _estimate_once(cfg, case, samples):
                            f"{e.read()[:300].decode(errors='replace')}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"LLM unreachable: {e.reason}")
+    except TimeoutError:
+        raise RuntimeError("LLM timeout: no response within the limit")
     return out["choices"][0]["message"]["content"]
 
 

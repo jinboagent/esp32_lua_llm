@@ -78,7 +78,7 @@ HISTORY_CHAR_BUDGET = 20000  # ~5k tokens; oldest turns trimmed (R-answer 1)
 SNAPSHOT_ADV_MAX = 20   # deduped-by-addr adv lines shown to the LLM
 SNAPSHOT_CONN_MAX = 30  # conn lines shown to the LLM
 DRAIN_TIMEOUT = 0.05    # serial readline timeout inside the Prompt loop
-LLM_TIMEOUT_S = 120
+LLM_TIMEOUT_S = 180
 
 SYSTEM_PROMPT = """You are the assistant inside a host-side session for an
 ESP32-S3 BLE sniffer dongle. The dongle streams JSON lines over USB; a
@@ -193,16 +193,22 @@ def resolve_llm_config(force_file=False):
         "base": (base or "https://api.openai.com/v1").rstrip("/"),
         "key": key,
         "model": model,
+        # honor QWEN_ENABLE_THINKING=false from the file: thinking
+        # models otherwise burn minutes on tool prompts (observed
+        # 2026-08-29: qwen3.8-27b timed out at 180 s with thinking on)
+        "no_thinking": (os.environ.get("QWEN_ENABLE_THINKING")
+                        or file_env.get("QWEN_ENABLE_THINKING",
+                                       "")).lower() == "false",
     }
 
 
 def _chat_once(cfg, messages):
     """One raw chat-completions request; never heals."""
-    body = json.dumps({
-        "model": cfg["model"],
-        "temperature": 0.2,
-        "messages": messages,
-    }).encode()
+    body = {"model": cfg["model"], "temperature": 0.2,
+            "messages": messages}
+    if cfg.get("no_thinking"):
+        body["enable_thinking"] = False
+    body = json.dumps(body).encode()
     req = urllib.request.Request(
         cfg["base"] + "/chat/completions", data=body,
         headers={"Content-Type": "application/json",
@@ -215,6 +221,8 @@ def _chat_once(cfg, messages):
                            f"{e.read()[:300].decode(errors='replace')}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"LLM unreachable: {e.reason}")
+    except TimeoutError:
+        raise RuntimeError("LLM timeout: no response within the limit")
     return out["choices"][0]["message"]["content"]
 
 

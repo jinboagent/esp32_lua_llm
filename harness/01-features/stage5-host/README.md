@@ -63,10 +63,11 @@ transcripts: `harness/02-knowledge/`.
 
 - `read_only` case — the dongle poll path is the only data path no case
   covers.
-- `llm_loop.py` still has the latent mid-upload `-612` blind spot (its
-  `upload_script` never reads during the paced send); convergence
-  refactor when touched — canonical copy for shared helpers is
-  `llm_loop.py` per review Rec3.
+- ~~`llm_loop.py` mid-upload `-612` blind spot~~ — CLOSED 2026-08-29:
+  the tool converged onto the stage-5 conventions (provider-pair
+  config with the unit rule, 401 fallback + `/api/v1` self-heal,
+  cmd-field matching, mid-upload `-612` watch, read-timeout handling,
+  `QWEN_ENABLE_THINKING` honored from env-or-file).
 - `--peer external` axis for real sensors (per-case UUIDs already in
   the Case contract).
 - `request_data` envelope type for the assistant (LLM pulls data on

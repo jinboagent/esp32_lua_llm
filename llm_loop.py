@@ -85,8 +85,23 @@ end
 """
 
 
+def expected_cmd(line):
+    """Response 'cmd' field for a CLI command line ('CONN TARGET x' ->
+    'conn_target'); None when unknown. cmd_json matches responses by
+    this so a stale status line from a previous exchange can never
+    satisfy the wrong command (2026-08-28 stale-line lesson)."""
+    words = line.split()
+    if len(words) >= 2 and words[0] in ("SCAN", "CONN", "SCRIPT", "POWER"):
+        return (words[0] + "_" + words[1]).lower()
+    if words and words[0] in ("STATUS", "VERSION"):
+        return words[0].lower()
+    return None
+
+
 def cmd_json(s, line, timeout=4.0):
-    """Send one command line; return (parsed JSON with 'status', all lines)."""
+    """Send one command line; return (parsed JSON with 'status', all lines).
+    Responses are matched by their cmd field to the command issued."""
+    want = expected_cmd(line)
     s.reset_input_buffer()
     s.write((line + "\n").encode())
     s.flush()
@@ -102,9 +117,12 @@ def cmd_json(s, line, timeout=4.0):
         lines.append(txt)
         if txt.startswith("{") and '"status"' in txt:
             try:
-                return json.loads(txt), lines
+                obj = json.loads(txt)
             except json.JSONDecodeError:
-                pass
+                continue
+            if isinstance(obj, dict) and (
+                    want is None or obj.get("cmd") == want):
+                return obj, lines
     return None, lines
 
 
@@ -133,14 +151,31 @@ def collect_adv(s, secs):
 
 
 def upload_script(s, script):
-    """Upload a script via the F4.2 text-line bridge (SCRIPT LOAD)."""
+    """Upload a script via the F4.2 text-line bridge (SCRIPT LOAD).
+    The bridge scans every data line fail-closed and answers a
+    violating line IMMEDIATELY with -612 (then resets the session), so
+    the send loop watches for that mid-upload response instead of
+    reporting the misleading -611 from the SCRIPT END that follows
+    (converged with the stage-5 tools, 2026-08-29)."""
     r, _ = cmd_json(s, "SCRIPT LOAD")
     if not r or r.get("status") != "ok":
         return False, f"SCRIPT LOAD: {r}"
-    for line in script.splitlines():
-        s.write((line + "\n").encode())
-        s.flush()
-        time.sleep(0.05)
+    old_timeout = s.timeout
+    s.timeout = 0.12
+    try:
+        for line in script.splitlines():
+            s.write((line + "\n").encode())
+            s.flush()
+            time.sleep(0.05)
+            while True:
+                raw = s.readline()
+                if not raw:
+                    break
+                txt = raw.decode(errors="replace").strip()
+                if txt.startswith("{") and '"status":"error"' in txt:
+                    return False, txt
+    finally:
+        s.timeout = old_timeout
     time.sleep(0.3)
     r, _ = cmd_json(s, "SCRIPT END")
     return bool(r and r.get("status") == "ok"), str(r)
@@ -199,40 +234,111 @@ def load_env_file():
     return env
 
 
-def llm_generate(samples, goal):
+def resolve_llm_config(force_file=False):
+    """Return {'base','key','model'} or None when no key is configured.
+
+    Same rules as the stage-5 host tools (converged 2026-08-29): real
+    env vars win as a UNIT (if any LLM_* variable is set, the whole
+    config comes from the environment); otherwise .llm_env is used
+    as-is — either the legacy LLM_* triple or provider pairs
+    (DASHSCOPE_*, then TOKEN_PLAN_*; first complete pair wins); the
+    model is LLM_MODEL or QWEN_MODEL. force_file skips the
+    environment (used by the 401 fallback)."""
     file_env = load_env_file()
-    base = (os.environ.get("LLM_BASE_URL")
-            or file_env.get("LLM_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
-    key = (os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
-           or file_env.get("LLM_API_KEY", ""))
-    model = os.environ.get("LLM_MODEL") or file_env.get("LLM_MODEL", "gpt-4o-mini")
+    env = os.environ
+    if not force_file and (
+            env.get("LLM_BASE_URL") or env.get("LLM_API_KEY")
+            or env.get("OPENAI_API_KEY") or env.get("LLM_MODEL")):
+        src, base = env, env.get("LLM_BASE_URL")
+        key = src.get("LLM_API_KEY") or src.get("OPENAI_API_KEY") or ""
+    else:
+        src = file_env
+        key = file_env.get("LLM_API_KEY") \
+            or file_env.get("OPENAI_API_KEY") or ""
+        base = file_env.get("LLM_BASE_URL")
+        if not key:
+            for prefix in ("DASHSCOPE", "TOKEN_PLAN"):
+                b = file_env.get(prefix + "_BASE_URL")
+                k = file_env.get(prefix + "_API_KEY")
+                if b and k:
+                    base, key = b, k
+                    break
     if not key:
+        return None
+    model = (src.get("LLM_MODEL") or file_env.get("QWEN_MODEL")
+             or "gpt-4o-mini")
+    return {"base": (base or "https://api.openai.com/v1").rstrip("/"),
+            "key": key, "model": model,
+            "no_thinking": (os.environ.get("QWEN_ENABLE_THINKING")
+                            or file_env.get("QWEN_ENABLE_THINKING",
+                                           "")).lower() == "false"}
+
+
+def _generate_once(cfg, messages):
+    body = {"model": cfg["model"], "temperature": 0.2,
+            "messages": messages}
+    if cfg.get("no_thinking"):
+        body["enable_thinking"] = False
+    body = json.dumps(body).encode()
+    req = urllib.request.Request(
+        cfg["base"] + "/chat/completions", data=body,
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer " + cfg["key"]})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            out = json.load(resp)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"LLM HTTP {e.code}: "
+                           f"{e.read()[:300].decode(errors='replace')}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"LLM unreachable: {e.reason}")
+    except TimeoutError:
+        raise RuntimeError("LLM timeout: no response within the limit")
+    return out["choices"][0]["message"]["content"]
+
+
+def llm_generate(samples, goal):
+    cfg = resolve_llm_config()
+    if cfg is None:
         sys.exit("error: no LLM_API_KEY (or OPENAI_API_KEY) in the environment\n"
-                 "       or in .llm_env next to this script.\n"
+                 "       or in .llm_env (legacy LLM_* triple or DASHSCOPE_*/\n"
+                 "       TOKEN_PLAN_* provider pairs) next to this script.\n"
                  "       Set LLM_BASE_URL/LLM_API_KEY/LLM_MODEL for your provider,\n"
                  "       or pass --dry-run to use the bundled sample script.")
     user = ("Goal: " + goal + "\n\nSample advertisements from the live "
             "environment (one JSON per line):\n"
             + "\n".join(json.dumps(a) for a in samples))
-    body = json.dumps({
-        "model": model,
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user},
-        ],
-    }).encode()
-    req = urllib.request.Request(
-        base + "/chat/completions", data=body,
-        headers={"Content-Type": "application/json",
-                 "Authorization": "Bearer " + key})
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user},
+    ]
+    print(f"  (LLM: {cfg['model']}, {len(user)} chars of sample)")
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            out = json.load(resp)
-    except urllib.error.HTTPError as e:
-        sys.exit(f"error: LLM HTTP {e.code}: {e.read()[:300].decode(errors='replace')}")
-    print(f"  (LLM: {model}, {len(user)} chars of sample)")
-    return strip_fences(out["choices"][0]["message"]["content"])
+        reply = _generate_once(cfg, messages)
+    except RuntimeError as e:
+        # Two known traps self-heal (same rules as the stage-5 tools):
+        # an ambient shell key 401s against the wrong provider, and a
+        # base ending /api/v1 is the native-dialect root, not the
+        # OpenAI-compatible route.
+        healed = False
+        if "HTTP 401" in str(e):
+            file_cfg = resolve_llm_config(force_file=True)
+            if file_cfg and file_cfg["key"] != cfg["key"]:
+                print(f"  (llm key from the shell environment was rejected "
+                      f"(401) — switching to .llm_env [{file_cfg['model']}])")
+                cfg = file_cfg
+                healed = True
+        if not healed and "HTTP 404" in str(e) and "/api/v1" in cfg["base"]:
+            new_base = cfg["base"].rsplit("/api/v1", 1)[0] \
+                + "/compatible-mode/v1"
+            print(f"  (base {cfg['base']} answered 404 (native dialect "
+                  f"root) — retrying on {new_base})")
+            cfg["base"] = new_base
+            healed = True
+        if not healed:
+            sys.exit(f"error: {e}")
+        reply = _generate_once(cfg, messages)
+    return strip_fences(reply)
 
 
 def report_stream(advs, console, label):

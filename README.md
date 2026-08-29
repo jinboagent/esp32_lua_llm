@@ -400,14 +400,17 @@ you can review it before deploying), `deploy` (upload + run + verify),
 `loop` (all of the above in one run). `--dry-run` exercises the full
 mechanical loop with a bundled sample script — no API key, no network.
 
-The LLM backend is any OpenAI-compatible endpoint, configured by env vars:
-`LLM_BASE_URL` (default `https://api.openai.com/v1`), `LLM_API_KEY` (falls
-back to `OPENAI_API_KEY`), `LLM_MODEL` (default `gpt-4o-mini`). DeepSeek,
-OpenRouter and local Ollama all work unchanged. The same three variables can
-instead live in a gitignored `.llm_env` file next to the script (real env
-vars win) — useful when your terminal's env doesn't reach other shells. The
-sample sent to the model is capped at 30 deduplicated advertisement lines to
-bound token cost.
+The LLM backend is any OpenAI-compatible endpoint. Config resolution
+follows the stage-5 conventions: real env vars win as a *unit*;
+otherwise `.llm_env` is used as-is — legacy `LLM_*` triple or provider
+pairs (`DASHSCOPE_*`, `TOKEN_PLAN_*`; model `LLM_MODEL`/`QWEN_MODEL`).
+A rejected shell key (401) falls back to the file automatically, a
+base ending `/api/v1` self-heals to `/compatible-mode/v1`, and
+`QWEN_ENABLE_THINKING=false` (env or file) disables reasoning mode —
+thinking models otherwise stall on script-generation prompts. DeepSeek,
+OpenRouter and local Ollama all work unchanged. The sample sent to the
+model is capped at 30 deduplicated advertisement lines to bound token
+cost.
 
 ## Host tooling: `host_app/run_case.py` (application cases, H5.2)
 
