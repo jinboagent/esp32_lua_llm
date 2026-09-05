@@ -30,13 +30,31 @@ Session surface:
   /scan on|off     control the advertisement plane
   /conn on|off     control the connection plane (CONN START/STOP)
   /deploy          re-offer the last Lua artifact
-  /history         show conversation summary
+  /tools           list registered tool packs (H6.1 tool registry)
+  /tools refresh   re-read the manifest from the device
+  /tools load F    register a tool pack (confirm-gated; H6.1)
+  /history         conversation summary
   /help, /quit     ...
 
 For prompt experiments: --system-extra FILE appends to the built-in
 system prompt (keeps the envelope contract); --system-file FILE
 replaces it outright (the typed-envelope router stays active, so
 non-envelope replies surface as clean errors, never a crash).
+
+Tool registry (H6.1 M1, host-only): a tool pack is a Lua file defining
+functions plus a manifest() describing them (one complete statement per
+line, <= 240 B). /tools load registers a pack on the device in RUN MODE:
+each line is LUA EXEC-ed into the live Lua state - RAM only, nothing
+persisted, the flash slot and any running filter script are untouched.
+The host fail-closed scans every line first (the device bridge's own
+token list) and validates the manifest (fetched in string.sub chunks -
+the 256 B result path cannot carry a whole manifest). While tools are
+registered, a "lua" envelope that composes tools (and defines no
+on_adv/transform/manifest) is a TOOL PROGRAM: executed on the device
+immediately - autonomously, no deploy confirm (decision 10) - and its
+result string is fed back to the LLM for the final answer; consecutive
+executions are capped per user turn. Filter/pack artifacts keep the
+human deploy gate.
 
 LLM backend (same conventions as llm_loop.py, values may live in a
 gitignored .llm_env next to this script or in the repo root):
@@ -79,6 +97,25 @@ SNAPSHOT_ADV_MAX = 20   # deduped-by-addr adv lines shown to the LLM
 SNAPSHOT_CONN_MAX = 30  # conn lines shown to the LLM
 DRAIN_TIMEOUT = 0.05    # serial readline timeout inside the Prompt loop
 LLM_TIMEOUT_S = 180
+
+# ---- H6.1 tool registry (M1: host-only, zero firmware) ----------------------
+
+TOOL_PACKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "tool_packs")
+LUA_EXEC_LINE_MAX = 240   # code budget/line: 256 B USB RX - "LUA EXEC " - \n
+MANIFEST_CHUNK = 180      # string.sub slice/fetch: 256 B result, 512 B TX
+MANIFEST_MAX = 8192       # hard cap on one manifest string
+MANIFEST_VERSION = 1
+TOOL_EXEC_CAP = 3         # consecutive tool-program executions per turn
+TOOL_PROGRAM_MAX_LINES = 12
+ARG_TYPES = ("string", "number", "boolean", "table")
+FORBIDDEN_DOTTED = ("os.", "io.", "debug.", "package.")
+FORBIDDEN_WORDS = ("dofile", "loadfile", "load", "require", "collectgarbage")
+RESERVED_TOOL_NAMES = ("manifest", "on_adv", "transform")
+IDENT_RE = re.compile(r"^[A-Za-z_]\w*$")
+DEPLOY_RE = re.compile(
+    r"function\s+(?:on_adv|transform|manifest)\b"
+    r"|(?:on_adv|transform|manifest)\s*=\s*function")
 
 SYSTEM_PROMPT = """You are the assistant inside a host-side session for an
 ESP32-S3 BLE sniffer dongle. The dongle streams JSON lines over USB; a
@@ -324,6 +361,206 @@ def build_messages(history_view, snapshot, user_text,
             + [{"role": "user", "content": content}])
 
 
+# ---- H6.1 tool registry: pack convention + host-side validation (M1) --------
+
+def scan_lua_line(line):
+    """Bridge-parity sandbox scan (the lua_llm_bridge.c token list):
+    dotted tokens match anywhere (they can only be table indexing), bare
+    words need identifier boundaries; a token inside a string literal is
+    rejected too - the same deliberate fail-closed stance the device
+    bridge takes with untrusted input. Returns the token or None."""
+    for tok in FORBIDDEN_DOTTED:
+        if tok in line:
+            return tok
+    for tok in FORBIDDEN_WORDS:
+        if re.search(r"(?<!\w)" + tok + r"(?!\w)", line):
+            return tok
+    return None
+
+
+def lua_exec_lines(src, kind="pack", max_lines=None):
+    """Split Lua source into LUA EXEC lines under the pack convention:
+    every kept line must be ONE complete statement; comment/blank lines
+    are skipped and never sent. Returns (lines, None) or (None, reason)."""
+    lines = []
+    for i, raw in enumerate(src.splitlines(), 1):
+        line = raw.rstrip()
+        s = line.strip()
+        if not s or s.startswith("--"):
+            continue
+        tok = scan_lua_line(s)
+        if tok:
+            return None, (f"{kind} rejected: line {i} contains forbidden "
+                          f"token '{tok}' (sandbox scan, fail-closed)")
+        if len(line) > LUA_EXEC_LINE_MAX:
+            return None, (f"{kind} rejected: line {i} exceeds the "
+                          f"{LUA_EXEC_LINE_MAX}-byte LUA EXEC line budget")
+        lines.append(line)
+        if max_lines is not None and len(lines) > max_lines:
+            return None, (f"{kind} rejected: more than {max_lines} "
+                          "executable lines")
+    if not lines:
+        return None, f"{kind} rejected: no executable lines"
+    return lines, None
+
+
+def _check_arg(a):
+    if not isinstance(a, dict) or not isinstance(a.get("name"), str) \
+            or not IDENT_RE.match(a["name"]):
+        return "each arg must be an object with a Lua-safe 'name'"
+    if a.get("type") not in ARG_TYPES:
+        return f"arg '{a['name']}': type must be one of {ARG_TYPES}"
+    if a.get("item_type") is not None \
+            and a["item_type"] not in ARG_TYPES:
+        return f"arg '{a['name']}': bad item_type"
+    return None
+
+
+def validate_manifest(text):
+    """Host-side manifest validation (decision 9). Returns
+    (manifest_dict, None) or (None, reason)."""
+    try:
+        obj = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None, "manifest is not valid JSON"
+    if not isinstance(obj, dict):
+        return None, "manifest is not a JSON object"
+    if obj.get("version") != MANIFEST_VERSION:
+        return None, f"manifest version must be {MANIFEST_VERSION}"
+    name = obj.get("name")
+    if not isinstance(name, str) or not IDENT_RE.match(name):
+        return None, "manifest 'name' must be a Lua-safe identifier"
+    tools = obj.get("tools")
+    if not isinstance(tools, list) or not tools:
+        return None, "manifest 'tools' must be a non-empty list"
+    seen = set()
+    for t in tools:
+        if not isinstance(t, dict):
+            return None, "each tool must be an object"
+        n = t.get("name")
+        if not isinstance(n, str) or not IDENT_RE.match(n):
+            return None, "tool name must be a Lua-safe identifier"
+        if n in seen:
+            return None, f"duplicate tool name '{n}'"
+        if n in RESERVED_TOOL_NAMES:
+            return None, f"tool name '{n}' is reserved"
+        seen.add(n)
+        if not isinstance(t.get("doc"), str) or not t["doc"].strip():
+            return None, f"tool '{n}': 'doc' is required"
+        args = t.get("args", [])
+        if not isinstance(args, list):
+            return None, f"tool '{n}': 'args' must be a list"
+        for a in args:
+            err = _check_arg(a)
+            if err:
+                return None, f"tool '{n}': {err}"
+        if "mutating" in t and not isinstance(t["mutating"], bool):
+            return None, f"tool '{n}': 'mutating' must be a boolean"
+    return obj, None
+
+
+def _arg_sig(t):
+    parts = []
+    for a in t.get("args", []):
+        s = f"{a['name']}: {a['type']}"
+        if "enum" in a:
+            s += " (" + "|".join(str(x) for x in a["enum"]) + ")"
+        parts.append(s)
+    return f"{t['name']}({', '.join(parts)})"
+
+
+def _arg_call_sig(t):
+    """A runnable example call built from the manifest's example args,
+    e.g. mean({numbers=[3, 5, 10]}). JSON scalars are valid Lua here."""
+    ea = (t.get("example") or {}).get("args")
+    if isinstance(ea, dict) and ea:
+        inner = ", ".join(k + "=" + json.dumps(v) for k, v in ea.items())
+        return f"{t['name']}({{{inner}}})"
+    return t["name"] + "({})"
+
+
+class ToolRegistry:
+    """Session-scoped registry (decision 13: run mode - a reboot clears
+    the device side). The HOST cache is authoritative: on-device a later
+    pack's manifest() overwrites the earlier one's global, so manifests
+    are captured at load time (decision 9 keeps validation host-side)."""
+
+    def __init__(self):
+        self.packs = []
+
+    def is_empty(self):
+        return not self.packs
+
+    def tool_names(self):
+        return {t["name"] for p in self.packs for t in p["tools"]}
+
+    def add(self, manifest, path):
+        if any(p["name"] == manifest["name"] for p in self.packs):
+            return None, f"pack '{manifest['name']}' is already registered"
+        names = {t["name"] for t in manifest["tools"]}
+        clash = names & (self.tool_names() | set(RESERVED_TOOL_NAMES))
+        if clash:
+            return None, ("name collision with an active pack: "
+                          + ", ".join(sorted(clash)))
+        pack = {"name": manifest["name"], "file": path,
+                "tools": manifest["tools"]}
+        self.packs.append(pack)
+        return pack, None
+
+    def describe(self):
+        out = [f"tools: {len(self.packs)} pack(s), "
+               f"{len(self.tool_names())} tool(s) "
+               "(session-scoped: re-load after a reboot)"]
+        for p in self.packs:
+            out.append(f"  {p['name']}  ({p['file']})")
+            for t in p["tools"]:
+                mark = "  [mutating]" if t.get("mutating") else ""
+                out.append(f"    {_arg_sig(t)} -> "
+                           f"{t.get('returns', 'string')}{mark}")
+                out.append("      " + t["doc"])
+                if t.get("example"):
+                    out.append(f'      example: {_arg_call_sig(t)} -> "'
+                               + str(t["example"].get("result", "..."))
+                               + '"')
+        return "\n".join(out)
+
+    def prompt(self):
+        """TOOLS system-prompt section; empty string when nothing is
+        registered (H5.3 behavior is then exactly unchanged)."""
+        if not self.packs:
+            return ""
+        out = ["", "TOOL REGISTRY (functions registered on the device by",
+               "the operator; session-scoped):"]
+        for p in self.packs:
+            out.append(f'pack "{p["name"]}" ({p["file"]}):')
+            for t in p["tools"]:
+                mark = " [mutating]" if t.get("mutating") else ""
+                out.append(f"- {_arg_sig(t)} -> "
+                           f"{t.get('returns', 'string')}{mark}: {t['doc']}")
+                if t.get("example"):
+                    out.append(f'  example: {_arg_call_sig(t)} -> "'
+                               f'{t["example"].get("result", "...")}"')
+        out += [
+            "",
+            "TOOL USE - when a registered tool would help, reply with type",
+            '"lua" whose "code" is a TOOL PROGRAM: Lua that calls the',
+            "registered tools and ends with `return` of a string. The",
+            "program is executed on the device IMMEDIATELY (no deploy",
+            "step); its result string is given back to you, then give",
+            "your final answer.",
+            "Every tool takes ONE table argument, e.g. "
+            "mean({numbers={3,5,10}}) or temp_convert({value=100,unit=\"c\"}).",
+            "Program limits: one complete statement per line, at most 240",
+            "bytes per line; variables do NOT persist between lines - keep",
+            "the whole program on ONE line ending in `return <string>`;",
+            "only the last line's return value is captured.",
+            "Never define on_adv/transform/manifest in a tool program -",
+            "those are filter/pack artifacts and go through the human",
+            "deploy confirmation instead.",
+        ]
+        return "\n".join(out)
+
+
 # ---- Bounded rolling device buffer (ingress validation + per-plane caps) ---
 
 class DeviceBuffer:
@@ -517,7 +754,8 @@ def expected_cmd(line):
     the wrong exchange (the 2026-08-28 stale-line lesson, applied to
     the host tools after the golden-fixture test tripped it)."""
     words = line.split()
-    if len(words) >= 2 and words[0] in ("SCAN", "CONN", "SCRIPT", "POWER"):
+    if len(words) >= 2 and words[0] in ("SCAN", "CONN", "SCRIPT", "POWER",
+                                        "LUA"):
         return (words[0] + "_" + words[1]).lower()
     if words and words[0] in ("STATUS", "VERSION"):
         return words[0].lower()
@@ -639,6 +877,9 @@ commands:
   /conn status     connection state and counters (CONN STATUS)
   /conn target <svc-uuid> [<chr-uuid>]   preset the auto-connect target
   /deploy          re-offer the last Lua artifact
+  /tools           list registered tool packs (H6.1 tool registry)
+  /tools refresh   re-read the manifest from the device
+  /tools load <f>  register a tool pack (confirm-gated, session-scoped)
   /history         conversation summary
   /help            this text
   /quit            cleanup and exit (Ctrl+C does the same)
@@ -663,6 +904,7 @@ class Session:
         self.system_prompt, self.system_note = compose_system_prompt(
             system_file, system_extra)
         self.last_lua = None
+        self.tools = ToolRegistry()
         self.s = None
 
     def open_device(self, port):
@@ -741,11 +983,11 @@ class Session:
         self.cfg_from_env = False
         return True
 
-    def ask_llm(self, user_text):
-        snapshot = self.buf.snapshot()
-        messages = build_messages(self.history.view(), snapshot, user_text,
-                                  self.system_prompt)
-        self.tee.say(f"(asking {self.cfg['model']} - {self.buf.counts()})")
+    def chat_envelope(self, messages):
+        """One LLM round trip with the Rec1 ladder (401 self-heal, then
+        ONE escaping-focused retry, fenced-lua extraction as the last
+        resort). Returns (envelope | None, last_raw_reply); raises on
+        transport errors the self-heals cannot cover."""
         try:
             reply = llm_chat(self.cfg, messages, self.tee.say)
         except RuntimeError as e:
@@ -761,18 +1003,75 @@ class Session:
             reply = llm_chat(self.cfg, messages, self.tee.say)
             env, fenced = parse_envelope(reply)   # fence allowed now:
             # extraction is the last resort, after the one retry (Rec1)
-        if env is None:
-            preview = reply if len(reply) <= 200 else reply[:200] + "..."
-            self.tee.say("llm (error): reply was not a valid typed "
-                         f"envelope even after retry. Raw reply: {preview}")
-            return
-        if fenced:
+        if env is not None and fenced:
             self.tee.say("(recovered the artifact from a fenced lua block "
                          "after two invalid envelopes)")
+        return env, reply
+
+    def ask_llm(self, user_text):
+        snapshot = self.buf.snapshot()
+        messages = build_messages(self.history.view(), snapshot, user_text,
+                                  self.system_prompt + self.tools.prompt())
+        self.tee.say(f"(asking {self.cfg['model']} - {self.buf.counts()})")
         # history keeps a compact marker, not the full (stale) snapshot
         self.history.add("user", "Device data snapshot attached. " + user_text)
-        self.history.add("assistant", json.dumps(env, ensure_ascii=False))
-        self.route(env)
+        executed = 0
+        while True:
+            env, reply = self.chat_envelope(messages)
+            code = env.get("code") if env is not None else None
+            is_program = (
+                env is not None and env["type"] == "lua"
+                and code is not None and not self.tools.is_empty()
+                and not DEPLOY_RE.search(strip_outer_fence(code)))
+            if is_program and executed < TOOL_EXEC_CAP:
+                # generate-and-execute (H6.1 d7+d10): run the program on
+                # the device now, hand the result back, let the LLM finish
+                ok, result = self.exec_tool_program(strip_outer_fence(code))
+                executed += 1
+                self.history.add("assistant", "(tool program) " + code[:120])
+                if ok:
+                    self.tee.say("tool> " + result)
+                    feedback = ("Tool program executed on the device. "
+                                "Result string:\n" + result)
+                    self.history.add("user", "TOOL RESULT: " + result[:200])
+                else:
+                    self.tee.say("(tool execution failed: " + result + ")")
+                    feedback = ("The device refused the tool program:\n"
+                                + result
+                                + "\nFix the program or answer without "
+                                "executing anything.")
+                    self.history.add("user", "TOOL ERROR: " + result[:200])
+                messages.append({"role": "assistant", "content": reply})
+                messages.append({"role": "user", "content": feedback})
+                continue
+            if is_program:
+                # cap reached (d10 loop guard): one corrective round, then
+                # the turn must end in a plain answer
+                self.tee.say(f"(tool execution cap reached ({TOOL_EXEC_CAP}/"
+                             "turn) - asking for a final answer without "
+                             "further execution)")
+                messages.append({"role": "assistant", "content": reply})
+                messages.append({"role": "user", "content":
+                                 "Execution budget for this turn is used up. "
+                                 "Give your final answer now (type answer); "
+                                 "do not reply with type lua."})
+                env, reply = self.chat_envelope(messages)
+                if (env is not None and env["type"] == "lua"
+                        and env.get("code") is not None
+                        and not DEPLOY_RE.search(
+                            strip_outer_fence(env["code"]))):
+                    self.tee.say("(stopped: the LLM kept proposing tool "
+                                 "programs after the cap - nothing more was "
+                                 "executed)")
+                    return
+            if env is None:
+                preview = reply if len(reply) <= 200 else reply[:200] + "..."
+                self.tee.say("llm (error): reply was not a valid typed "
+                             f"envelope even after retry. Raw reply: {preview}")
+                return
+            self.history.add("assistant", json.dumps(env, ensure_ascii=False))
+            self.route(env)
+            return
 
     def route(self, env):
         t = env["type"]
@@ -927,6 +1226,167 @@ class Session:
             head = t["content"][:70].replace("\n", " ")
             self.tee.say(f"  {i + 1}. {t['role']}: {head}")
 
+    # -- H6.1 tool registry ---------------------------------------------------
+
+    def lua_exec_result(self, code):
+        """One LUA EXEC -> (ok, result_string | error_detail). Self-heals
+        the engine-not-initialized case once via LUA INIT."""
+        r = cmd_json(self.s, "LUA EXEC " + code, self.buf)
+        if (r is not None and r.get("status") == "error"
+                and "not initialized" in str(r.get("msg", "")).lower()):
+            init = cmd_json(self.s, "LUA INIT", self.buf)
+            if init is not None and init.get("status") == "ok":
+                r = cmd_json(self.s, "LUA EXEC " + code, self.buf)
+        if r is None:
+            return False, "no response (timeout)"
+        if r.get("status") != "ok":
+            return False, describe_resp(r)
+        return True, r.get("result", "")
+
+    def fetch_manifest(self):
+        """Chunked manifest() fetch: the 256 B LUA EXEC result path cannot
+        carry a whole manifest, so string.sub slices are joined host-side.
+        Returns (text, None) or (None, error_detail)."""
+        parts, pos = [], 1
+        while pos <= MANIFEST_MAX:
+            ok, chunk = self.lua_exec_result(
+                "return string.sub(manifest()," + str(pos) + ","
+                + str(pos + MANIFEST_CHUNK - 1) + ")")
+            if not ok:
+                return None, chunk
+            if not chunk:
+                break
+            parts.append(chunk)
+            if len(chunk) < MANIFEST_CHUNK:
+                break
+            pos += MANIFEST_CHUNK
+        else:
+            return None, "manifest exceeds the 8 KB budget"
+        text = "".join(parts)
+        if not text:
+            return None, "manifest() returned an empty string"
+        return text, None
+
+    def exec_tool_program(self, code):
+        """Run-mode execution (decision 14 `run` + decision 10 autonomy):
+        validate lines host-side, exec each on the device, the LAST line's
+        return value is the program result. Returns (ok, result)."""
+        lines, err = lua_exec_lines(code, kind="tool program",
+                                    max_lines=TOOL_PROGRAM_MAX_LINES)
+        if err:
+            return False, err
+        if self.s is None:
+            return False, "no device connected"
+        result = ""
+        for ln in lines:
+            ok, out = self.lua_exec_result(ln)
+            if not ok:
+                return False, f"device rejected {ln[:60]!r}: {out}"
+            result = out or "(no return value)"
+        return True, result
+
+    def do_tools(self, arg):
+        parts = arg.split()
+        if not parts:
+            if self.tools.is_empty():
+                self.tee.say("(no tool packs registered - /tools load "
+                             "<file.lua>; the demo lives in "
+                             "host_app/tool_packs/demo.lua)")
+            else:
+                self.tee.say(self.tools.describe())
+            return
+        if parts[0] == "refresh":
+            self.do_tools_refresh()
+        elif parts[0] == "load" and len(parts) >= 2:
+            self.do_tools_load(" ".join(parts[1:]))
+        else:
+            self.tee.say("usage: /tools [ | refresh | load <file.lua> ]")
+
+    def do_tools_refresh(self):
+        if self.tools.is_empty():
+            self.tee.say("(no packs registered)")
+            return
+        if self.s is None:
+            self.tee.say("(no device)")
+            return
+        text, err = self.fetch_manifest()
+        if err:
+            if "global 'manifest'" in err or "attempt to call" in err:
+                self.tee.say("(device manifest() is gone - the Lua state "
+                             "was probably reset; registry cleared, "
+                             "/tools load to re-register)")
+                self.tools = ToolRegistry()
+            else:
+                self.tee.say("(refresh failed: " + err + ")")
+            return
+        m, verr = validate_manifest(text)
+        if verr:
+            self.tee.say("(refresh: " + verr + ")")
+            return
+        for p in self.tools.packs:
+            if p["name"] == m["name"]:
+                p["tools"] = m["tools"]
+                self.tee.say(f"(refreshed pack '{m['name']}': "
+                             f"{len(m['tools'])} tools)")
+                return
+        self.tee.say(f"(device serves pack '{m['name']}' which is not in "
+                     "the registry - /tools load it to register)")
+
+    def do_tools_load(self, path):
+        if self.s is None:
+            self.tee.say("(no device - packs are registered on the device)")
+            return
+        cands = ([path] if os.path.isabs(path)
+                 else [path, os.path.join(TOOL_PACKS_DIR, path)])
+        src = None
+        for c in cands:
+            if os.path.isfile(c):
+                with open(c, encoding="utf-8") as f:
+                    src = f.read()
+                path = c
+                break
+        if src is None:
+            self.tee.say("(pack file not found: " + path + ")")
+            return
+        lines, err = lua_exec_lines(src, kind="pack")
+        if err:
+            self.tee.say("(" + err + ")")
+            return
+        # registration is the privileged act (decision 4): confirm-gated
+        self.tee.say(f"register pack {path} ({len(lines)} LUA EXEC lines, "
+                     "run mode - RAM only, nothing persisted)? [y/N]")
+        line = self.wait_for_line()
+        if line is None:
+            self.tee.say("(input closed - pack not registered)")
+            return
+        self.tee.say(f"  confirm> {line}")
+        if line.strip().lower() not in ("y", "yes"):
+            self.tee.say("(aborted - nothing was sent to the device)")
+            return
+        for i, ln in enumerate(lines, 1):
+            ok, detail = self.lua_exec_result(ln)
+            if not ok:
+                self.tee.say(f"(device rejected line {i}: {detail}; "
+                             "pack NOT registered)")
+                return
+        text, err = self.fetch_manifest()
+        if err:
+            self.tee.say("(pack functions are on the device but the "
+                         "manifest fetch failed: " + err + ")")
+            return
+        m, verr = validate_manifest(text)
+        if verr:
+            self.tee.say("(manifest rejected: " + verr + "; functions are "
+                         "on the device but NOT registered)")
+            return
+        pack, cerr = self.tools.add(m, path)
+        if cerr:
+            self.tee.say("(" + cerr + ")")
+            return
+        self.tee.say(f"(pack '{m['name']}' registered: {len(m['tools'])} "
+                     "tools, run mode)")
+        self.tee.say(self.tools.describe())
+
     def handle_line(self, line):
         line = line.strip()
         if not line:
@@ -953,6 +1413,8 @@ class Session:
             self.do_scan(arg.strip())
         elif cmd == "/conn":
             self.do_conn(arg.strip())
+        elif cmd == "/tools":
+            self.do_tools(arg.strip())
         elif cmd == "/deploy":
             if self.last_lua:
                 self.confirm_deploy()

@@ -245,6 +245,7 @@ class AskLlmRetryOrderTests(unittest.TestCase):
         self.sess.history = assistant.History()
         self.sess.cfg = {"base": "https://x/v1", "key": "k", "model": "m"}
         self.sess.system_prompt = assistant.SYSTEM_PROMPT
+        self.sess.tools = assistant.ToolRegistry()
         self.sess.reader = unittest.mock.Mock()
         self.sess.reader.poll_line.return_value = ""    # input closed
         self.sess.s = None       # no device: deploy confirm ends at EOF
@@ -383,6 +384,7 @@ class Fallback401Tests(unittest.TestCase):
         self.sess.reader.poll_line.return_value = ""
         self.sess.s = None
         self.sess.system_prompt = assistant.SYSTEM_PROMPT
+        self.sess.tools = assistant.ToolRegistry()
 
     def test_switch_on_401(self):
         with unittest.mock.patch.dict(os.environ, self.ENV, clear=True), \
@@ -697,6 +699,413 @@ class FeatureOffTests(unittest.TestCase):
         self.assertIn("-455", assistant.describe_resp(r))
         self.assertEqual(assistant.describe_resp(None),
                          "no response (timeout)")
+
+
+# ---- H6.1 tool registry ------------------------------------------------------
+
+DEMO_MANIFEST = (
+    '{"version":1,"name":"demo","tools":['
+    '{"name":"mean","doc":"Arithmetic mean of a table of numbers.",'
+    '"args":[{"name":"numbers","type":"table","item_type":"number"}],'
+    '"returns":"string","mutating":false,'
+    '"example":{"args":{"numbers":[3,5,10]},"result":"6.00"}},'
+    '{"name":"temp_convert","doc":"Temperature conversion.",'
+    '"args":[{"name":"value","type":"number"},'
+    '{"name":"unit","type":"string","enum":["c","f"]}],'
+    '"returns":"string","mutating":false,'
+    '"example":{"args":{"value":100,"unit":"c"},"result":"212.0F"}},'
+    '{"name":"bench_reset","doc":"Reset the demo counter.",'
+    '"args":[],"returns":"ack","mutating":true,'
+    '"example":{"args":{},"result":"ok: bench reset"}}]}')
+
+
+class ScanLuaLineTests(unittest.TestCase):
+    """Bridge token parity (lua_llm_bridge.c): dotted tokens match
+    anywhere, bare words need identifier boundaries, tokens inside
+    string literals are rejected too - fail-closed by design."""
+
+    def test_dotted_tokens_caught(self):
+        for line in ("local t = os.time()", "x = io.read()",
+                     "debug.traceback()", "return package.path",
+                     's = "call os.system now"'):   # inside a string too
+            self.assertIsNotNone(assistant.scan_lua_line(line), line)
+
+    def test_words_need_boundaries(self):
+        for line in ("return load('x')", "require('x')",
+                     "collectgarbage()", "dofile('x')", "loadfile('x')"):
+            self.assertIsNotNone(assistant.scan_lua_line(line), line)
+
+    def test_clean_lines_pass(self):
+        for line in ("payload = 1",          # 'load' inside a word: ok
+                     "download_count = 2",
+                     "return string.format('%.2f', 6/3)",
+                     "function mean(a) return a[1] end"):
+            self.assertIsNone(assistant.scan_lua_line(line), line)
+
+
+class LuaExecLinesTests(unittest.TestCase):
+    def test_comments_and_blanks_skipped(self):
+        lines, err = assistant.lua_exec_lines(
+            "-- header comment\n\nlocal_ok = 1\n  -- indented comment\n")
+        self.assertIsNone(err)
+        self.assertEqual(lines, ["local_ok = 1"])
+
+    def test_too_long_line_rejected(self):
+        lines, err = assistant.lua_exec_lines('x = "' + "a" * 250 + '"')
+        self.assertIsNone(lines)
+        self.assertIn("240-byte", err)
+
+    def test_forbidden_line_rejected(self):
+        lines, err = assistant.lua_exec_lines("t = os.time()")
+        self.assertIsNone(lines)
+        self.assertIn("os.", err)
+
+    def test_empty_source_rejected(self):
+        lines, err = assistant.lua_exec_lines("-- nothing executable\n")
+        self.assertIsNone(lines)
+        self.assertIn("no executable lines", err)
+
+    def test_max_lines_enforced(self):
+        lines, err = assistant.lua_exec_lines(
+            "\n".join(f"x{i} = {i}" for i in range(5)), max_lines=4)
+        self.assertIsNone(lines)
+        self.assertIn("more than 4", err)
+
+    def test_real_demo_pack_passes(self):
+        """The shipped demo pack obeys its own convention: every kept
+        line is within the budget and the scan is clean."""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "..", "host_app", "tool_packs", "demo.lua")
+        with open(path, encoding="utf-8") as f:
+            lines, err = assistant.lua_exec_lines(f.read())
+        self.assertIsNone(err)
+        self.assertTrue(all(len(l) <= assistant.LUA_EXEC_LINE_MAX
+                            for l in lines))
+        self.assertTrue(any("function manifest" in l for l in lines))
+        self.assertEqual(len([l for l in lines
+                              if l.startswith("function ")]), 5)
+
+
+class ValidateManifestTests(unittest.TestCase):
+    def test_demo_manifest_valid(self):
+        m, err = assistant.validate_manifest(DEMO_MANIFEST)
+        self.assertIsNone(err)
+        self.assertEqual(m["name"], "demo")
+        self.assertEqual([t["name"] for t in m["tools"]],
+                         ["mean", "temp_convert", "bench_reset"])
+
+    def test_rejections(self):
+        bad = {
+            "not json": "nope{",
+            "bad version": '{"version":2,"name":"x",'
+                           '"tools":[{"name":"a","doc":"d"}]}',
+            "bad name": '{"version":1,"name":"not-ok",'
+                        '"tools":[{"name":"a","doc":"d"}]}',
+            "empty tools": '{"version":1,"name":"x","tools":[]}',
+            "dup names": '{"version":1,"name":"x",'
+                         '"tools":[{"name":"a","doc":"d"},'
+                         '{"name":"a","doc":"d"}]}',
+            "reserved name": '{"version":1,"name":"x",'
+                             '"tools":[{"name":"on_adv","doc":"d"}]}',
+            "no doc": '{"version":1,"name":"x","tools":[{"name":"a"}]}',
+            "bad arg type": '{"version":1,"name":"x","tools":[{"name":"a",'
+                            '"doc":"d","args":[{"name":"n","type":"float"}]}]}',
+        }
+        for label, text in bad.items():
+            m, err = assistant.validate_manifest(text)
+            self.assertIsNone(m, label)
+            self.assertTrue(err, label)
+
+
+class ToolRegistryTests(unittest.TestCase):
+    def _demo(self):
+        m, _ = assistant.validate_manifest(DEMO_MANIFEST)
+        return m
+
+    def test_add_and_collisions(self):
+        reg = assistant.ToolRegistry()
+        pack, err = reg.add(self._demo(), "demo.lua")
+        self.assertIsNone(err)
+        self.assertEqual(len(pack["tools"]), 3)
+        _, err = reg.add(self._demo(), "demo.lua")
+        self.assertIn("already registered", err)
+        other = assistant.validate_manifest(
+            DEMO_MANIFEST.replace('"name":"demo"', '"name":"other"'))[0]
+        _, err = reg.add(other, "other.lua")   # same tool names
+        self.assertIn("collision", err)
+
+    def test_prompt_empty_when_no_packs(self):
+        self.assertEqual(assistant.ToolRegistry().prompt(), "")
+
+    def test_prompt_lists_tools_and_rules(self):
+        reg = assistant.ToolRegistry()
+        reg.add(self._demo(), "host_app/tool_packs/demo.lua")
+        p = reg.prompt()
+        self.assertIn("TOOL REGISTRY", p)
+        self.assertIn("mean(numbers: table)", p)
+        self.assertIn('example: mean({numbers=[3, 5, 10]}) -> "6.00"', p)
+        self.assertIn("[mutating]", p)
+        self.assertIn("240", p)
+        self.assertIn("on_adv", p)
+
+    def test_describe_listing(self):
+        reg = assistant.ToolRegistry()
+        reg.add(self._demo(), "demo.lua")
+        d = reg.describe()
+        self.assertIn("1 pack(s), 3 tool(s)", d)
+        self.assertIn("bench_reset() -> ack  [mutating]", d)
+
+
+class DeployArtifactTests(unittest.TestCase):
+    """The routing rule: hooks/manifest definitions are deploy artifacts
+    (human gate); tool compositions are programs (autonomous)."""
+
+    def test_hooks_and_manifest_are_deploy_artifacts(self):
+        for code in ("function on_adv(a) return true end",
+                     "transform = function(a, j) return j end",
+                     "function manifest() return M end",
+                     "-- on_adv = function (mentioned in a comment)"):
+            self.assertIsNotNone(assistant.DEPLOY_RE.search(code), code)
+
+    def test_tool_programs_are_not(self):
+        for code in ("return mean({numbers={3,5,10}})",
+                     'return temp_convert({value=100,unit="c"})',
+                     "local t = mean({numbers={1}}) return t"):
+            self.assertIsNone(assistant.DEPLOY_RE.search(code), code)
+
+
+class ExpectedCmdLuaTests(unittest.TestCase):
+    def test_lua_exec_maps_to_cmd_field(self):
+        """Every LUA exchange matches responses by cmd field - the
+        2026-08-28 stale-line lesson, extended to the tool path."""
+        self.assertEqual(assistant.expected_cmd("LUA EXEC return 1"),
+                         "lua_exec")
+        self.assertEqual(assistant.expected_cmd("LUA INIT"), "lua_init")
+        self.assertEqual(assistant.expected_cmd("SCAN STOP"), "scan_stop")
+
+
+class FetchManifestTests(unittest.TestCase):
+    """Chunked string.sub fetch over a canned serial; also the
+    engine-not-initialized self-heal."""
+
+    class FakeSerial:
+        def __init__(self, responses):
+            self.responses = list(responses)
+            self.written = []
+            self.timeout = 1
+
+        def write(self, b):
+            self.written.append(b)
+
+        def flush(self):
+            pass
+
+        def readline(self):
+            return self.responses.pop(0) if self.responses else b""
+
+        def reset_input_buffer(self):
+            pass
+
+    @staticmethod
+    def lua_ok(result):
+        return ('{"status":"ok","cmd":"lua_exec","result":'
+                + json.dumps(result) + "}\n").encode()
+
+    def _sess(self, sim):
+        sess = assistant.Session.__new__(assistant.Session)
+        sess.tee = unittest.mock.Mock()
+        sess.buf = assistant.DeviceBuffer()
+        sess.s = sim
+        return sess
+
+    def test_chunks_are_joined(self):
+        m = DEMO_MANIFEST
+        step = assistant.MANIFEST_CHUNK
+        chunks = [m[i:i + step] for i in range(0, len(m), step)]
+        if len(chunks[-1]) == step:
+            chunks.append("")
+        sim = self.FakeSerial([self.lua_ok(c) for c in chunks])
+        text, err = self._sess(sim).fetch_manifest()
+        self.assertIsNone(err)
+        self.assertEqual(text, m)
+        sent = [w.decode().strip() for w in sim.written]
+        self.assertIn("LUA EXEC return string.sub(manifest(),1,180)", sent)
+        self.assertIn("LUA EXEC return string.sub(manifest(),181,360)", sent)
+
+    def test_engine_not_initialized_heals_once(self):
+        not_ready = (b'{"status":"error","cmd":"lua_exec",'
+                     b'"msg":"Lua engine not initialized"}\n')
+        init_ok = b'{"status":"ok","cmd":"lua_init"}\n'
+        m = '{"version":1,"name":"x","tools":[{"name":"a","doc":"d"}]}'
+        sim = self.FakeSerial([not_ready, init_ok, self.lua_ok(m)])
+        text, err = self._sess(sim).fetch_manifest()
+        self.assertIsNone(err)
+        self.assertEqual(text, m)
+        self.assertIn("LUA INIT", [w.decode().strip() for w in sim.written])
+
+
+class ToolReplTests(ReplLoopTests):
+    """Whole-session flows on the DeviceSimSerial: /tools load is
+    confirm-gated, tool programs execute autonomously with the result fed
+    back to the LLM, the execution cap forces a final answer, and hook
+    artifacts keep the human deploy gate."""
+
+    PACK = "\n".join([
+        "-- test pack",
+        'TM = [[{"version":1,"name":"tpack","tools":[{"name":"mean",'
+        '"doc":"Arithmetic mean of numbers.","args":[{"name":"numbers",'
+        '"type":"table","item_type":"number"}],',
+        'TM = TM .. [["returns":"string","mutating":false,'
+        '"example":{"args":{"numbers":[3,5,10]},"result":"6.00"}}]}]]',
+        "function manifest() return TM end",
+        "function mean(a) local s=0 for i=1,#a do s=s+a[i] end "
+        "return string.format(\"%.2f\",s/#a) end",
+    ])
+
+    PACK_MANIFEST = (
+        '{"version":1,"name":"tpack","tools":[{"name":"mean",'
+        '"doc":"Arithmetic mean of numbers.","args":[{"name":"numbers",'
+        '"type":"table","item_type":"number"}],"returns":"string",'
+        '"mutating":false,"example":{"args":{"numbers":[3,5,10]},'
+        '"result":"6.00"}}]}')
+
+    @staticmethod
+    def lua_ok(result):
+        return ('{"status":"ok","cmd":"lua_exec","result":'
+                + json.dumps(result) + "}\n").encode()
+
+    def lua_pack_responses(self):
+        r = dict(self.responses())
+        for ln in self.PACK.splitlines():
+            s = ln.strip()
+            if s and not s.startswith("--"):
+                r["LUA EXEC " + s] = [self.lua_ok("")]
+        m = self.PACK_MANIFEST
+        step = assistant.MANIFEST_CHUNK
+        chunks = [m[i:i + step] for i in range(0, len(m), step)]
+        if len(chunks[-1]) == step:
+            chunks.append("")
+        for i, c in enumerate(chunks):
+            lo = i * step + 1
+            r[f"LUA EXEC return string.sub(manifest(),{lo},{lo + step - 1})"] \
+                = [self.lua_ok(c)]
+        return r
+
+    def write_pack(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".lua",
+                                         delete=False,
+                                         encoding="utf-8") as f:
+            f.write(self.PACK)
+            self.addCleanup(os.unlink, f.name)
+            return f.name
+
+    def test_tools_load_and_list(self):
+        sim = DeviceSimSerial(self.lua_pack_responses())
+        pack = self.write_pack()
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "y", "/tools", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("register pack", log)
+        self.assertIn("confirm> y", log)
+        self.assertIn("pack 'tpack' registered: 1 tools", log)
+        self.assertIn("mean(numbers: table) -> string", log)
+        self.assertIn('example: mean({numbers=[3, 5, 10]}) -> "6.00"', log)
+        self.assertIn("LUA EXEC function manifest() return TM end",
+                      sim.written)
+
+    def test_tools_load_declined_sends_nothing(self):
+        sim = DeviceSimSerial(self.lua_pack_responses())
+        pack = self.write_pack()
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "n", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("(aborted - nothing was sent to the device)", log)
+        self.assertFalse([w for w in sim.written
+                          if w.startswith("LUA EXEC")])
+
+    def test_tool_program_round_trip(self):
+        sim = DeviceSimSerial(self.lua_pack_responses())
+        sim.responses["LUA EXEC return mean({numbers={3,5,10}})"] = \
+            [self.lua_ok("6.00")]
+        pack = self.write_pack()
+        program = json.dumps({"type": "lua", "text": "compute",
+                              "code": "return mean({numbers={3,5,10}})"})
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "y",
+             "what is the mean of 3, 5 and 10?", "/quit"],
+            sim, no_llm=False,
+            cfg={"base": "https://x/v1", "key": "k", "model": "stub"},
+            llm_replies=[program,
+                         '{"type":"answer","text":"the mean is 6.00"}'])
+        self.assertEqual(rc, 0)
+        self.assertIn("tool> 6.00", log)
+        self.assertIn("llm: the mean is 6.00", log)
+        self.assertIn("LUA EXEC return mean({numbers={3,5,10}})",
+                      sim.written)
+        self.assertNotIn("deploy? [y/N]", log)
+
+    def test_hook_artifact_still_deploy_gated(self):
+        sim = DeviceSimSerial(self.lua_pack_responses())
+        pack = self.write_pack()
+        hook = json.dumps({"type": "lua", "text": "filter",
+                           "code": "function on_adv(a) return true end"})
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "y", "keep everything", "/quit"],
+            sim, no_llm=False,
+            cfg={"base": "https://x/v1", "key": "k", "model": "stub"},
+            llm_replies=[hook])
+        self.assertEqual(rc, 0)
+        self.assertIn("deploy? [y/N]", log)
+        self.assertNotIn("tool>", log)
+        # the next piped line (/quit) answers the gate: artifact kept,
+        # nothing was uploaded to the device
+        self.assertIn("(kept as the last artifact - /deploy re-offers it)",
+                      log)
+        self.assertNotIn("SCRIPT LOAD", sim.written)
+
+    def test_execution_cap_forces_final_answer(self):
+        sim = DeviceSimSerial(self.lua_pack_responses())
+        sim.responses["LUA EXEC return mean({numbers={3,5,10}})"] = \
+            [self.lua_ok("6.00")]
+        pack = self.write_pack()
+        program = json.dumps({"type": "lua", "text": "again",
+                              "code": "return mean({numbers={3,5,10}})"})
+        # four programs offered: three execute, the fourth trips the cap
+        # and the LLM is told to finalize - which it does
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "y", "mean please", "/quit"],
+            sim, no_llm=False,
+            cfg={"base": "https://x/v1", "key": "k", "model": "stub"},
+            llm_replies=[program, program, program, program,
+                         '{"type":"answer","text":"done"}'])
+        self.assertEqual(rc, 0)
+        self.assertEqual(log.count("tool> 6.00"), 3)
+        self.assertIn("tool execution cap reached (3/turn)", log)
+        self.assertIn("llm: done", log)
+
+    def test_device_error_is_corrective_feedback(self):
+        sim = DeviceSimSerial(self.lua_pack_responses())
+        sim.responses["LUA EXEC return mean({numbers={3,5,10}})"] = [
+            ('{"status":"error","cmd":"lua_exec","code":-630,"msg":"attempt '
+             'to call a nil value (global \'mean\')"}\n').encode()]
+        sim.responses["LUA EXEC return mean({numbers={1,2,3}})"] = \
+            [self.lua_ok("2.00")]
+        pack = self.write_pack()
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "y", "mean of 3,5,10", "/quit"],
+            sim, no_llm=False,
+            cfg={"base": "https://x/v1", "key": "k", "model": "stub"},
+            llm_replies=[
+                json.dumps({"type": "lua", "text": "try",
+                            "code": "return mean({numbers={3,5,10}})"}),
+                json.dumps({"type": "lua", "text": "fixed",
+                            "code": "return mean({numbers={1,2,3}})"}),
+                '{"type":"answer","text":"it is 2.00"}'])
+        self.assertEqual(rc, 0)
+        self.assertIn("(tool execution failed:", log)
+        self.assertIn("tool> 2.00", log)
+        self.assertIn("llm: it is 2.00", log)
 
 
 if __name__ == "__main__":
