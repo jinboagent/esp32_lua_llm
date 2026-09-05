@@ -31,7 +31,7 @@ ESP32-S3 passive BLE advertisement scanner → AD parse → C filters → option
 - **Serial port (N3)**: closing COM12 resets the chip — keep the port open for the whole session; the final close at orderly exit is the accepted reset. `CONN STOP` returning ok means "terminate issued", not "state is off" — wait for `CONN STATUS state:"off"` before the next conn command
 - **Host tools are self-contained by design** (copied helpers, no cross-imports); shared *conventions*, not shared code — see `harness/01-features/stage5-host/README.md`
 - **LLM credentials** (`.llm_env`, gitignored): env vars win as a UNIT; the file may carry legacy `LLM_*` or provider pairs (`DASHSCOPE_*`, `TOKEN_PLAN_*`; model `LLM_MODEL`/`QWEN_MODEL`). The tools self-heal two known traps: a rejected shell key (401 → announced fallback to the file) and the Aliyun `/api/v1` native-dialect root (404 → announced retry on `/compatible-mode/v1`)
-- **Never commit directly to master**; one feature per branch, squash-merge, keep the branch (`harness/00-global-context/git_workflow.md`); every significant session leaves a process report + evidence in `harness/02-knowledge/`
+- **Never commit directly to master**; one feature per branch, cut from a registered baseline (master today); every feature branch carries a root `BRANCH.zcode.md` manifest (feature, baseline + cut commit, status, ACs, changelog) and every squash-merge updates the root `FEATURES.zcode.md` index (policy: `docs/workflow-feature-branches-2026-09-03.zcode.md`, `harness/00-global-context/git_workflow.md`); keep the branch after merge; every significant session leaves a process report + evidence in `harness/02-knowledge/`
 
 ## Build & Test
 

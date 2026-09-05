@@ -698,3 +698,277 @@ needs every newline as `\n`, quote as `\"`, backslash as `\` inside
 - `host_app/assistant.py` (`parse_envelope`, `upload_script`)
 - `tests/host/test_assistant.py` (escaping round-trip, fenced fallback)
 - `harness/02-knowledge/assistant-session-2026-08-28.md` (process report)
+
+## 19. The Dongle's Lua Hooks: on_adv / transform
+
+**Why:** They are the original Lua feature and the "data plane" half of the
+tool-registry design discussion.
+
+**Context:** Asked directly while discussing the tool-registry proposal
+(2026-09-05): "what is the on_adv/transform?"
+
+### What you just learned
+- `on_adv(addr, addr_type, rssi, name, uuids, manu_id, manu_data) -> bool`
+  is a FILTER gate: called per advertisement; true = emit, false = suppress.
+- `transform(addr, json_string) -> string` is a REWRITER: its return
+  replaces the outgoing JSON line.
+- Both are PUSH hooks: the device calls your Lua automatically as data
+  flows (firmware/components/ble/scan_pipeline.c) — the opposite of TOOLS,
+  which the LLM pulls on demand. Data plane vs control plane.
+
+### Resources
+- `harness/01-features/stage3-lua/`, `docs/example_llm_generated.lua`
+- llm_loop.py SYSTEM_PROMPT (the exact hook ABI the LLM is taught)
+
+## 20. Why a CLI Needs a State Machine
+
+**Why:** The dongle's commands are only valid in certain states; the matrix
+turns "should never happen" into checked, testable rules.
+
+**Context:** Asked while reading the tool-registry proposal's open
+question 1 (2026-09-05): "why cli need a state machine?"
+
+### What you just learned
+- States: idle / scanning / script-loaded / script-running (+ conn states);
+  invalid commands return -911 with a JSON error.
+- Real rules from this firmware: no script upload while running; no
+  CONN START while a script runs (conn lines bypass the hooks); no
+  SCRIPT RUN unloaded.
+- The whole matrix is asserted by the C7 hardware test
+  (tests/hw/test_ble_conn_hw.py) — one table instead of scattered ifs.
+- Related trap observed 2026-08-28: a command returning ok is not the same
+  as the state having settled (CONN STOP vs state "off").
+
+## 21. Tool Manifests = Function-Calling Registration, Authored on the Device
+
+**Why:** The manifest is what lets an LLM "see" what a microcontroller can
+do — the core of the Lua tool registry proposal (H6.1).
+
+**Context:** Asked while discussing the proposal (2026-09-05): "what is
+the manifest, explain why we need it."
+
+### What you just learned
+- A manifest is a machine-readable tool list (name, doc, arg types,
+  mutating flag, example) — same concept as OpenAI function-calling /
+  MCP tool schemas, but authored IN Lua on the device (manifest()), so the
+  device is self-describing to any host.
+- Knowledge amortization: device expertise is written once by the device
+  expert; every future LLM session inherits it (vs re-typing hardware
+  prompts every session).
+- "Convention as the product" (open question 6): if the pattern — not the
+  dongle — is the deliverable, the manifest format becomes a public
+  mini-spec ("MCP for MCUs") and the dongle is reference implementation #1.
+- Single-script slot (open question 1): firmware stores ONE script
+  (/littlefs/script.lua); a tool pack either shares the file with filter
+  hooks (one script, two roles) or waits for multi-pack storage (M4).
+
+### Resources
+- docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md
+- docs/feature-proposal-lua-tool-registry-2026-09-05-deepseek.md (result channel)
+
+## 22. Hooks, and the Push/Pull Call Model of the Two Planes
+
+**Why:** Hooks are the project's original extension mechanism, and
+push-vs-pull is the vocabulary of the tool-registry design (H6.1).
+
+**Context:** Asked while discussing the tool-registry proposal
+(2026-09-05): "what is the hook's role", "explain the pull and push in
+the calls".
+
+### What you just learned
+- A HOOK is a pre-defined function slot the firmware calls at a fixed
+  point — inversion of control: the framework calls you. This project
+  has two, both in the adv-plane pipeline: on_adv (gate: true=keep) and
+  transform (rewriter: return the outgoing line). C owns timing/safety;
+  Lua owns policy. Hooks never see conn lines (mode boundary).
+- PUSH = the device initiates (hooks fire per advertisement; the stream
+  flows machine-paced). The LLM is author-time (wrote the hook once)
+  and read-time (sees snapshots) — never present at the event.
+- PULL = the LLM initiates (generates a Lua composition calling
+  registered tools; human confirms; LUA EXEC executes; result returns
+  on the result channel). Sparse, human-paced.
+- They meet: transform is the push-mode result channel; tool events
+  (emit()) would be push-for-tools (open Q7); one session can compose
+  both — pull to decide, push to act continuously.
+
+### Resources
+- docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md (§3.1, §5)
+- firmware/components/ble/scan_pipeline.c (where hooks fire)
+
+## 23. Push-Mode Tool Events: Why Event-Driven Beats Polling
+
+**Why:** Deciding open question 7 of the tool-registry proposal (should
+tools grow emit()?).
+
+**Context:** Asked while discussing the proposal (2026-09-05): "what is
+the advantage of push-mode tool results".
+
+### What you just learned
+- Push events let the DEVICE initiate ("it just got too hot") instead of
+  only answering — watching happens on-device for free; the LLM pays per
+  event, not per check (the edge-computing split: decide locally,
+  escalate rarely).
+- Events outlive the conversation turn: they land on the stream, so the
+  rolling buffer / tee / next LLM snapshot capture them ("while you were
+  away: 3 overtemp events"). Pull results evaporate with their turn.
+- Physical ground truth is asynchronous — push read-back subscriptions
+  are how an ack ("ok: heater on") eventually meets proof ("feedback:
+  0 A"). Pull cannot express "what happened after you asked".
+- The hard part is scheduling: emitting during a call is easy; a
+  free-running watchdog needs a caller-less Lua context + rate limits.
+  Today's push only fires at pipeline moments (transform per adv line).
+- Middle path: HOST-side pseudo-push — a host watcher polls tools on a
+  timer and injects synthetic events; zero firmware; device-side emit()
+  is only needed when events must fire while the host is away.
+
+### Resources
+- docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md (§8 Q7)
+
+## 24. Mutating vs Read-Only Tools; Gates; "Lean"
+
+**Why:** Vocabulary of the tool-registry trust model (decisions 4/10).
+
+**Context:** Asked while resolving the proposal's open questions
+(2026-09-05): "what is lean and what is a mutating-only gate?"
+
+### What you just learned
+- A MUTATING tool changes device state (set_heater, motor_stop); a
+  read-only tool only measures/computes (read_temp, mean) and is safe
+  to call freely. The manifest flags each tool mutating:true/false.
+- A GATE is a y/N confirmation before execution. A mutating-ONLY gate
+  confirms just the programs that touch mutating tools (the host can
+  detect this statically from the manifest) — vs approving every call.
+  Per decision 10, execution is autonomous; the gate returns as a host
+  policy OPTION when M3 hardware makes actuation physical.
+- "my lean is X" = my recommendation/inclination, overridable.
+- Activation options (Q2): A session-scoped (RAM, per-session load);
+  B boot-time auto-activation ("autorun" in the manifest — the device
+  carries its own tools); C SCRIPT DUMP (read back over USB). Rejected:
+  SCRIPT RUN (state-machine entanglement).
+
+## 25. Handling Uncertainty in System Design
+
+**Why:** The tool-registry design hit a genuinely deferrable decision
+(boot-time activation "depends on the application") and resolved it by
+keeping the framework simple + reserving a placeholder.
+
+**Context:** Product owner asked (2026-09-05): "how does a good system
+design approach handle this kind of uncertainty?"
+
+### What you just learned
+- **Defer to the last responsible moment**: decide when the information
+  exists, not before — but reserve the seam before options close.
+- **Placeholders = reserved seams**: a named empty slot whose existence
+  is decided but whose behavior isn't. In this repo: manifest
+  `version:1`, the `mutating` flag, `returns:"value"|"ack"`,
+  `"autorun": false` (decision 13), `CONFIG_BLE_CONN_ENABLED`.
+- **Information hiding (Parnas)**: interfaces built on the stable part
+  (manifest FORMAT), hiding the volatile part (its SOURCE: in-script
+  today, file/firmware later) — consumers survive provider swaps.
+- **Reversibility ranking**: uncertainty + cheap-to-reverse → try it
+  now; uncertainty + expensive → defer with a placeholder.
+- **Walking skeleton**: build thin end-to-end first (M1); real usage
+  generates the evidence that resolves deferred decisions.
+- Failure modes avoided: gold-plating (building every imagined future)
+  and freezing accidents into interfaces (what `version` prevents).
+
+### Resources
+- docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md (§8 Q2,
+  decision 13)
+
+## 26. Milestones (M1, M2, …) in Roadmaps
+
+**Why:** The tool-registry proposal's roadmap is staged M1–M4 and the
+owner asked what "M" means.
+
+**Context:** 2026-09-03, reading §7 of
+docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md.
+
+### What you just learned
+- **M = Milestone**: a numbered, *deliverable* stage that can be built
+  and verified on its own — not just a planning label.
+- Ordering principle used here: prove the risky thing cheapest-first.
+  M1 (host-only, zero firmware) proves the whole LLM-loop convention
+  with no hardware or firmware risk; if the convention is wrong, that
+  is discovered where changing it costs nothing. Dependencies unlock
+  later: M2 storage/on-device validation, M3 `hw.*` + budgets, M4
+  optional extras.
+- Milestones double as the uncertainty tool: decisions are deferred to
+  the milestone where their trigger actually fires (walking skeleton
+  generates the evidence).
+- Same pattern at product level: this repo's stages 0–5 are
+  milestones of the product roadmap.
+
+### Resources
+- docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md (§7)
+- docs/workflow-feature-branches-2026-09-03.zcode.md (branch-per-
+  feature workflow adopted 2026-09-03)
+
+## 27. Tool Packs, and RAM vs Flash on the Dongle
+
+**Why:** The M1-scope question (open question #1) leaned on two terms
+the owner had not internalized yet: "pack" and "RAM-multi /
+flash-single".
+
+**Context:** 2026-09-03, discussing the decision-8 tension in
+docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md.
+
+### What you just learned
+- **Pack** = one Lua file whose *role* is registering tools: it contains
+  `manifest()` plus the tool functions. The unit of registration —
+  called "pack" (not "script") to keep it distinct from the filter role
+  (`on_adv`/`transform`), and because one file bundles several tools +
+  their docs, like a plugin pack.
+- The dongle has **two storage places**, and M1 uses both:
+  - **Flash** `/littlefs/script.lua` — persistent (survives reboot),
+    but exactly **one slot**; written by `SCRIPT LOAD/END`.
+  - **The live Lua state** — **RAM**; holds every defined global; any
+    number of functions from different files coexist there; wiped by
+    reboot or `LUA INIT`; extended line-by-line by `LUA EXEC`.
+- M1 activation = upload through the flash path (that buys the
+  compile-check + per-line sandbox scan — the trust chain), then
+  `LUA EXEC` each line to define the globals in RAM (works outside the
+  CLI state machine, so tools coexist with scanning/connecting).
+- Consequence: many packs can be active in one session (RAM-multi),
+  but only the last-uploaded file persists (flash-single). Host files
+  are the real source of truth; reboot just means re-load. True
+  multi-pack storage + boot-time activation = M2 (`autorun`
+  placeholder is the reserved seam).
+- Generic pattern: RAM is volatile working state, flash is persistent
+  storage — desk vs shelf; the host PC is the warehouse.
+
+### Resources
+- docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md (§5
+  activation, §8 Q1/Q2)
+
+## 28. What Survives a Power Cycle — Deploy Modes
+
+**Why:** The owner reframed the M1 storage question as deploy *intent*:
+scripts that SET PARAMETERS (the MCU owns the parameters afterwards)
+vs scripts that must RUN FOREVER — selected by a flag in the host-side
+Python layer.
+
+**Context:** 2026-09-03, resolving the M1 RAM-multi/flash-single
+tension (tool-registry proposal, decision 14).
+
+### What you just learned
+- The right question is "what must survive power-up" — the *effect*
+  (parameters), the *script* (resident programs), or *nothing* (tool
+  calls) — not "where does the file live". Storage mechanics follow
+  intent.
+- Three deploy modes: `run` (RAM globals, nothing survives — the
+  default for tool calls), `configure` (the effect survives;
+  device-owned key-value store = M3 `hw.*` seam; session-only in M1),
+  `resident` (script in flash + running role; today the host re-issues
+  `SCRIPT RUN` after each boot; M2 `autorun` makes the firmware do
+  it).
+- Pattern: **persistence of effect vs persistence of code** — the
+  split between configuration stores (NVS / key-value) and program
+  storage. The policy flag lives in the host layer (decision 10); the
+  manifest `"autorun"` field is the device-side seam it graduates into
+  (M2) — one concept, two homes.
+- RAM-multi/flash-single accepted for M1: the host's pack files are
+  the source of truth.
+
+### Resources
+- docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md §5.1

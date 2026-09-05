@@ -25,7 +25,17 @@ feature/4-state-machine
 feature/4-integration-test
 ```
 
-All branches are cut from `main`. No long-lived feature branches.
+All branches are cut from a registered **baseline** — today the only
+baseline is `master` (this repo's baseline ref; older text here says
+`main`, same meaning). No long-lived feature branches.
+
+**Branch manifest (required since 2026-09-03):** every feature branch
+carries `BRANCH.zcode.md` at the repo root — created at branch cut,
+kept current — stating which feature the branch works on and which
+baseline (+ commit sha) it was cut from. Every squash merge adds or
+updates the feature's entry in the baseline's root `FEATURES.zcode.md`
+index. Full policy + templates:
+`docs/workflow-feature-branches-2026-09-03.zcode.md`.
 
 ## Commit Messages
 
@@ -273,6 +283,9 @@ main ─────────────────────────
 ```
 
 - Squash-merge to keep `main` history clean (one commit per feature).
+- Every feature branch carries `BRANCH.zcode.md` (feature + baseline +
+  cut commit); every merge updates the baseline's `FEATURES.zcode.md`
+  index — policy: `docs/workflow-feature-branches-2026-09-03.zcode.md`.
 - Dont need Delete feature branch after merge. keep the feature branch so we can revert if needed.
 - Never force-push `main`.
 - Never commit directly to `main`.
