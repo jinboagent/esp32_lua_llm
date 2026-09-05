@@ -25,32 +25,42 @@ structured `tool_call` envelopes (optional later mode), `llm_loop.py`
 changes.
 
 ## Acceptance criteria
-- [ ] `/tools load` registers a pack: host fail-closed token scan
+- [x] `/tools load` registers a pack: host fail-closed token scan
       (bridge parity), line-complete statements ≤ 240 B, manifest
       fetched via chunked `LUA EXEC return string.sub(manifest(),…)`
       (256 B result path), validated host-side (decision 9), cross-pack
       name collisions rejected (decision 8)
-- [ ] `/tools` lists packs/tools; `/tools refresh` re-syncs and clears
+- [x] `/tools` lists packs/tools; `/tools refresh` re-syncs and clears
       the registry when the device state was reset
-- [ ] With tools registered, an LLM `lua` envelope composing tools is a
+- [x] With tools registered, an LLM `lua` envelope composing tools is a
       TOOL PROGRAM: executed autonomously (decision 10 — no per-program
       confirm), result string fed back, loop continues to a final
       answer; consecutive executions capped at 3 per turn
-- [ ] Envelopes defining `on_adv`/`transform`/`manifest` still take the
+- [x] Envelopes defining `on_adv`/`transform`/`manifest` still take the
       deploy path with the human gate
-- [ ] `expected_cmd` maps `LUA` → `lua_exec` (stale-line safety on every
+- [x] `expected_cmd` maps `LUA` → `lua_exec` (stale-line safety on every
       exec exchange)
-- [ ] Unit suite green; live session evidence archived under
-      `harness/02-knowledge/`
+- [x] Unit suite green (79/79); live session evidence archived under
+      `harness/02-knowledge/evidence-tool-registry-2026-09-03/`
 
 ## Verification plan
 `python tests/host/test_assistant.py`; then a live session on COM12 with
 the real LLM (load → list → tool composition → result → final answer),
 transcript archived to `harness/02-knowledge/evidence-tool-registry-*/`.
+ALL DONE 2026-09-03 — see the process report
+`harness/02-knowledge/tool-registry-2026-09-03.zcode.md`.
 
 ## Changelog (append-only)
-- 2026-09-03 (start) branch fast-forwarded to master `c9665a7`; spec
-  promoted to `harness/01-features/stage6-agent/`; implementation begins
+- 2026-09-03 (start) spec promoted to `harness/01-features/stage6-agent/`;
+  implementation begins
+- 2026-09-03 `70b15f0` M1 implemented (pack + assistant + 29 tests);
+  branch rebased onto master `c9665a7` (the docs commit) so the spec
+  references the proposal in-tree
+- 2026-09-03 live verification on COM12 caught two demo-pack bugs —
+  stray brace in the manifest tail (device -612 per-line compile) and a
+  mean-implementation convention mismatch (`nan`) — both fixed, pinned
+  by a host-side pack-assembly replay test; clean full loop archived
+  (evidence 01-04); status: awaiting owner review, unmerged
 
 ## Merge record (filled at merge time)
 - squash commit: \<sha\> on master

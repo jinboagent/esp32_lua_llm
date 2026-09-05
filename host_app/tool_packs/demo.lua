@@ -12,10 +12,10 @@ DEMO_M = DEMO_M .. [["returns":"string","mutating":false,]]
 DEMO_M = DEMO_M .. [["example":{"args":{"value":100,"unit":"c"},"result":"212.0F"}},{]]
 DEMO_M = DEMO_M .. [["name":"bench_reset","doc":"Reset the pack's demo counter (the private helper demo_bench_tick advances it).",]]
 DEMO_M = DEMO_M .. [["args":[],"returns":"ack","mutating":true,]]
-DEMO_M = DEMO_M .. [["example":{"args":{},"result":"ok: bench reset"}}]]}
+DEMO_M = DEMO_M .. [["example":{"args":{},"result":"ok: bench reset"}}]}]]
 function manifest() return DEMO_M end
 demo_n = 0
-function mean(a) local s=0 for i=1,#a do s=s+a[i] end return string.format("%.2f",s/#a) end
+function mean(a) local t=a.numbers local s=0 for i=1,#t do s=s+t[i] end return string.format("%.2f",s/#t) end
 function temp_convert(a) if a.unit=="c" then return string.format("%.1fF",a.value*9/5+32) elseif a.unit=="f" then return string.format("%.1fC",(a.value-32)*5/9) end return "err: unit must be c or f" end
 function bench_reset() demo_n=0 return "ok: bench reset" end
 function demo_bench_tick() demo_n=demo_n+1 return demo_n end

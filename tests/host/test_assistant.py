@@ -785,6 +785,29 @@ class LuaExecLinesTests(unittest.TestCase):
         self.assertEqual(len([l for l in lines
                               if l.startswith("function ")]), 5)
 
+    def test_demo_pack_manifest_assembles_valid(self):
+        """Replay the pack's DEMO_M concatenation lines host-side and
+        validate the assembled manifest - pins the JSON assembly (the
+        first live session caught a stray closing brace here: the device
+        rejected the pack at per-line compile, 2026-09-05)."""
+        import re
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "..", "host_app", "tool_packs", "demo.lua")
+        with open(path, encoding="utf-8") as f:
+            lines, _ = assistant.lua_exec_lines(f.read())
+        m = ""
+        for ln in lines:
+            first = re.match(r"^DEMO_M = \[\[(.*)\]\]$", ln)
+            more = re.match(r"^DEMO_M = DEMO_M \.\. \[\[(.*)\]\]$", ln)
+            if first:
+                m = first.group(1)
+            elif more:
+                m += more.group(1)
+        manifest, err = assistant.validate_manifest(m)
+        self.assertIsNone(err, err)
+        self.assertEqual(manifest["name"], "demo")
+        self.assertEqual(len(manifest["tools"]), 3)
+
 
 class ValidateManifestTests(unittest.TestCase):
     def test_demo_manifest_valid(self):

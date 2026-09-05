@@ -1,6 +1,7 @@
 # LATEST — Status Pointer
 
-**Current status:** [`status-2026-08-28-host-cases.md`](status-2026-08-28-host-cases.md) and [`status-2026-08-28-assistant.md`](status-2026-08-28-assistant.md) — stage 5 (host tooling) merged to master 2026-08-28
+**Current status:** [`status-2026-09-03-tool-registry.zcode.md`](status-2026-09-03-tool-registry.zcode.md) — H6.1 M1 Lua Tool Registry implemented + live-verified on branch `Lua_tool_extension_dev` (unmerged, review pending); stage 5 remains the last merge on master
+
 
 ## At a glance
 

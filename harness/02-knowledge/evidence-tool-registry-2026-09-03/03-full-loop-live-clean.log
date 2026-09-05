@@ -1,0 +1,36 @@
+=== assistant session (2026-09-05 22:27) ===
+llm backend: qwen3.8-27b  (config: environment variables (unset LLM_API_KEY to use .llm_env))
+system prompt: built-in
+transcript: E:\agent\esp32_lua_llm\assistant_20260905_222716.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+device: idle  (/scan on to start)
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+type /help for commands; /quit exits
+you: /tools load demo.lua
+register pack E:\agent\esp32_lua_llm\host_app\tool_packs\demo.lua (18 LUA EXEC lines, run mode - RAM only, nothing persisted)? [y/N]
+  confirm> y
+(pack 'demo' registered: 3 tools, run mode)
+tools: 1 pack(s), 3 tool(s) (session-scoped: re-load after a reboot)
+  demo  (E:\agent\esp32_lua_llm\host_app\tool_packs\demo.lua)
+    mean(numbers: table) -> string
+      Arithmetic mean of a table of numbers.
+      example: mean({numbers=[3, 5, 10]}) -> "6.00"
+    temp_convert(value: number, unit: string (c|f)) -> string
+      Temperature conversion: unit 'c' returns Fahrenheit, 'f' returns Celsius.
+      example: temp_convert({value=100, unit="c"}) -> "212.0F"
+    bench_reset() -> ack  [mutating]
+      Reset the pack's demo counter (the private helper demo_bench_tick advances it).
+      example: bench_reset({}) -> "ok: bench reset"
+you: using your registered tools, compute the arithmetic mean of 3, 5 and 10, and convert 100 degrees Celsius to Fahrenheit
+(asking qwen3.8-27b - buffer: 0 adv lines (0 addresses), 0 conn lines, 24 invalid dropped)
+(llm key from the shell environment was rejected (401) - switching to .llm_env [qwen3.8-27b])
+tool> 6.00 212.0F
+llm: Mean of 3, 5, 10 is 6.00; 100 °C is 212.0 °F.
+you: /quit
+(exit - cleaning up)
+  (script_stop: {"status":"error","cmd":"script_stop","code":-911,"msg":"invalid state: no script running"})
+  (scan_stop: {"status":"error","cmd":"scan_stop","msg":"not scanning"})
+  (conn_stop: {"status":"error","cmd":"conn_stop","code":-453})
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260905_222716.log

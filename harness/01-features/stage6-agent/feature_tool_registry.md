@@ -11,7 +11,7 @@
 | Source Files | `host_app/assistant.py`, `host_app/tool_packs/demo.lua` |
 | Test Files   | `tests/host/test_assistant.py`; live sessions in `harness/02-knowledge/` |
 | Origin       | Proposal `docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md` (decisions 1–14, incl. the deepseek addendum) |
-| Status       | In progress 2026-09-03, branch `Lua_tool_extension_dev` |
+| Status       | Implemented 2026-09-03 (M1), branch `Lua_tool_extension_dev` — unit 79/79 + live evidence `harness/02-knowledge/evidence-tool-registry-2026-09-03/`; unmerged, review pending |
 
 ## Functional Description
 

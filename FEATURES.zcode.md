@@ -90,7 +90,7 @@ branch); recorded here so the index stays complete:
 
 | Branch | Cut from | State |
 |---|---|---|
-| `Lua_tool_extension_dev` | master @ `e287261` (2026-09-03) | **H6.1 Lua Tool Registry** seat — no commits yet; design under discussion in `docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md` |
+| `Lua_tool_extension_dev` | master @ `c9665a7` (2026-09-03) | **H6.1 Lua Tool Registry M1 implemented + live-verified** (pack convention, demo pack, assistant generate-and-execute; unit 79/79) — unmerged, review pending; spec `harness/01-features/stage6-agent/` |
 | `ble_connected` | pre-F2.4-merge | historical implementation line; content superseded by the merged F2.4 |
 | `docs/stage5-refresh` | pre-`d090091` | merged via squash `d090091`; kept per policy |
 
