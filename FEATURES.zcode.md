@@ -79,6 +79,12 @@ branch); recorded here so the index stays complete:
   catch, thinking-flag handling, cmd-field matching).
 - `e287261`: `first_order_poll` case — the dongle poll path, ground-truth
   checked (30/30).
+- `51dc9c6`: BLE component thread-model README
+  (`firmware/components/ble/README.md`) — the 4-task concurrency model,
+  sync primitives, and adv/conn data paths.
+- `4022b72`: Windows BLE peripheral capability test
+  (`vendor_reference/ble_test/`) — WinRT tool proving the laptop can act
+  as a BLE peripheral, a reusable peer for conn-plane tests.
 
 ## Not yet in this baseline (open branches)
 
