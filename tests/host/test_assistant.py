@@ -975,10 +975,10 @@ class ToolReplTests(ReplLoopTests):
 
     PACK = "\n".join([
         "-- test pack",
-        'TM = [[{"version":1,"name":"tpack","tools":[{"name":"mean",'
-        '"doc":"Arithmetic mean of numbers.","args":[{"name":"numbers",'
-        '"type":"table","item_type":"number"}],',
-        'TM = TM .. [["returns":"string","mutating":false,'
+        'TM = [[{"version":1,"name":"tpack","tools":[{]]',
+        'TM = TM .. [["name":"mean","doc":"Arithmetic mean of numbers.",'
+        '"args":[{"name":"numbers","type":"table","item_type":"number"}],'
+        '"returns":"string","mutating":false,'
         '"example":{"args":{"numbers":[3,5,10]},"result":"6.00"}}]}]]',
         "function manifest() return TM end",
         "function mean(a) local s=0 for i=1,#a do s=s+a[i] end "
@@ -1129,6 +1129,383 @@ class ToolReplTests(ReplLoopTests):
         self.assertIn("(tool execution failed:", log)
         self.assertIn("tool> 2.00", log)
         self.assertIn("llm: it is 2.00", log)
+
+    COLLIDING_PACK = "\n".join([
+        "-- colliding pack (tool name 'mean' collides with tpack)",
+        'CM = [[{"version":1,"name":"cpack","tools":[{]]',
+        'CM = CM .. [["name":"mean","doc":"colliding mean.",'
+        '"args":[{"name":"numbers","type":"table","item_type":"number"}],'
+        '"returns":"string","mutating":false,'
+        '"example":{"args":{"numbers":[1,2]},"result":"1.50"}}]}]]',
+        "function manifest() return CM end",
+        'function mean(a) return "1.50" end',
+    ])
+
+    def _write_pack_text(self, text):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False,
+                                         encoding="utf-8") as f:
+            f.write(text)
+            self.addCleanup(os.unlink, f.name)
+            return f.name
+
+    def test_tools_empty_listing(self):
+        sim = DeviceSimSerial(self.responses())
+        rc, log = self.run_session(["/tools", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("(no tool packs registered", log)
+
+    def test_tools_refresh_no_packs(self):
+        sim = DeviceSimSerial(self.responses())
+        rc, log = self.run_session(["/tools refresh", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("(no packs registered)", log)
+        self.assertFalse([w for w in sim.written if w.startswith("LUA EXEC")])
+
+    def test_tools_refresh_updates_pack(self):
+        sim = DeviceSimSerial(self.lua_pack_responses())
+        pack = self.write_pack()
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "y", "/tools refresh", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("pack 'tpack' registered", log)
+        self.assertIn("(refreshed pack 'tpack': 1 tools)", log)
+
+    def test_tools_refresh_clears_on_device_reset(self):
+        # unit-level: a pack is already registered, then the device Lua
+        # state was reset (manifest() gone) - /tools refresh clears it
+        class Sim:
+            timeout = 1
+
+            def __init__(self, responses):
+                self.responses = list(responses)
+                self.written = []
+
+            def write(self, b):
+                self.written.append(b)
+
+            def flush(self):
+                pass
+
+            def readline(self):
+                return self.responses.pop(0) if self.responses else b""
+
+            def reset_input_buffer(self):
+                pass
+
+        sess = assistant.Session.__new__(assistant.Session)
+        sess.tee = unittest.mock.Mock()
+        sess.buf = assistant.DeviceBuffer()
+        sess.tools = assistant.ToolRegistry()
+        m, _ = assistant.validate_manifest(
+            '{"version":1,"name":"tpack","tools":[{"name":"mean","doc":"d",'
+            '"args":[{"name":"numbers","type":"table","item_type":"number"}],'
+            '"returns":"string"}]}')
+        sess.tools.add(m, "tpack.lua")
+        sess.s = Sim([(
+            '{"status":"error","cmd":"lua_exec","code":-630,'
+            '"msg":"attempt to call a nil value (global \'manifest\')"}\n'
+        ).encode()])
+        sess.do_tools_refresh()
+        self.assertTrue(sess.tools.is_empty())
+        self.assertIn("registry cleared",
+                      str(sess.tee.say.call_args_list))
+
+    def test_tools_load_collision_rejected_before_send(self):
+        sim = DeviceSimSerial(self.lua_pack_responses())
+        pack_a = self.write_pack()
+        pack_b = self._write_pack_text(self.COLLIDING_PACK)
+        rc, log = self.run_session(
+            [f"/tools load {pack_a}", "y",
+             f"/tools load {pack_b}", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("pack 'tpack' registered", log)
+        self.assertIn("name collision with an active pack", log)
+        # the colliding pack's lines never reached the device
+        self.assertFalse([w for w in sim.written
+                          if w.startswith("LUA EXEC CM")])
+
+    def test_tools_load_duplicate_rejected_before_send(self):
+        sim = DeviceSimSerial(self.lua_pack_responses())
+        pack = self.write_pack()
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "y", f"/tools load {pack}", "/quit"],
+            sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("pack 'tpack' registered", log)
+        self.assertIn("already registered", log)
+
+
+class AssembleManifestSourceTests(unittest.TestCase):
+    """assemble_manifest_from_source reconstructs a pack's manifest JSON
+    from its VAR = [[...]] / VAR = VAR .. [[...]] lines, host-side, so it
+    can be validated before any device line is sent (H6.1 AC#2)."""
+
+    def _demo_src(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "..", "host_app", "tool_packs", "demo.lua")
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def test_assembles_real_demo_pack(self):
+        text, err = assistant.assemble_manifest_from_source(self._demo_src())
+        self.assertIsNone(err, err)
+        m, verr = assistant.validate_manifest(text)
+        self.assertIsNone(verr, verr)
+        self.assertEqual(m["name"], "demo")
+        self.assertEqual([t["name"] for t in m["tools"]],
+                         ["mean", "temp_convert", "bench_reset"])
+
+    def test_no_manifest_function(self):
+        text, err = assistant.assemble_manifest_from_source(
+            "function mean(a) return 'x' end\n")
+        self.assertIsNone(text)
+        self.assertIn("manifest", err)
+
+    def test_no_string_literal(self):
+        text, err = assistant.assemble_manifest_from_source("\n".join([
+            "function manifest() return built_elsewhere end",
+            "built_elsewhere = 'not a long string'",
+        ]))
+        self.assertIsNone(text)
+        self.assertIn("string literal", err)
+
+    def test_multiline_string_falls_back(self):
+        # a pack that spans [[...]] across lines (the loose form) is not
+        # reconstructible here - returns None so the caller falls back
+        text, err = assistant.assemble_manifest_from_source("\n".join([
+            'M = [[{"version":1,"name":"x","tools":[{"name":"a","doc":"d"}]',
+            '}]]',
+            "function manifest() return M end",
+        ]))
+        self.assertIsNone(text)
+        self.assertIsNotNone(err)
+
+    def test_variable_name_agnostic(self):
+        text, err = assistant.assemble_manifest_from_source("\n".join([
+            'CFG = [[{"version":1,"name":"z","tools":[{"name":"f","doc":"d"}]}]]',
+            "function manifest() return CFG end",
+        ]))
+        self.assertIsNone(err, err)
+        m, verr = assistant.validate_manifest(text)
+        self.assertIsNone(verr, verr)
+        self.assertEqual(m["name"], "z")
+        self.assertEqual([t["name"] for t in m["tools"]], ["f"])
+
+
+class ToolsCommandEdgeTests(unittest.TestCase):
+    """Edge branches in the /tools surface: no device, missing pack file,
+    and refresh against a device serving an unregistered pack."""
+
+    class ListSerial:
+        timeout = 1
+
+        def __init__(self, responses):
+            self.responses = list(responses)
+            self.written = []
+
+        def write(self, b):
+            self.written.append(b)
+
+        def flush(self):
+            pass
+
+        def readline(self):
+            return self.responses.pop(0) if self.responses else b""
+
+        def reset_input_buffer(self):
+            pass
+
+    def _sess(self, serial=None):
+        sess = assistant.Session.__new__(assistant.Session)
+        sess.tee = unittest.mock.Mock()
+        sess.buf = assistant.DeviceBuffer()
+        sess.tools = assistant.ToolRegistry()
+        sess.s = serial
+        return sess
+
+    def _register(self, sess, name="tpack"):
+        m, _ = assistant.validate_manifest(
+            '{"version":1,"name":"%s","tools":[{"name":"mean","doc":"d",'
+            '"args":[{"name":"numbers","type":"table","item_type":"number"}],'
+            '"returns":"string"}]}' % name)
+        sess.tools.add(m, name + ".lua")
+
+    def test_load_no_device(self):
+        sess = self._sess(None)
+        sess.do_tools_load("demo.lua")
+        self.assertIn("no device", str(sess.tee.say.call_args))
+
+    def test_load_file_not_found(self):
+        sess = self._sess(unittest.mock.Mock())
+        sess.do_tools_load("/nonexistent/pack.lua")
+        self.assertIn("pack file not found", str(sess.tee.say.call_args))
+
+    def test_refresh_no_device(self):
+        sess = self._sess(None)
+        self._register(sess)
+        sess.do_tools_refresh()
+        self.assertIn("no device", str(sess.tee.say.call_args))
+
+    def test_refresh_serves_unknown_pack(self):
+        other = ('{"version":1,"name":"otherpack",'
+                 '"tools":[{"name":"sum","doc":"d"}]}')
+        responses = [(
+            '{"status":"ok","cmd":"lua_exec","result":' + json.dumps(other)
+            + '}\n').encode()]
+        sess = self._sess(self.ListSerial(responses))
+        self._register(sess)      # host has "tpack"; device serves "otherpack"
+        sess.do_tools_refresh()
+        self.assertIn("not in the registry",
+                      str(sess.tee.say.call_args_list))
+
+
+class ArgSigTests(unittest.TestCase):
+    """The manifest arg/format helpers, tested directly (previously only
+    exercised through validate_manifest / describe / prompt)."""
+
+    def test_check_arg_valid(self):
+        for a in ({"name": "x", "type": "number"},
+                  {"name": "t", "type": "table", "item_type": "number"},
+                  {"name": "u", "type": "string", "enum": ["c", "f"]}):
+            self.assertIsNone(assistant._check_arg(a), a)
+
+    def test_check_arg_rejections(self):
+        for a, key in [
+            ({"type": "number"}, "name"),                  # missing name
+            ({"name": "1bad", "type": "number"}, "name"),  # not Lua-safe
+            ({"name": "x", "type": "float"}, "type"),      # unknown type
+            ({"name": "x", "type": "table",
+              "item_type": "float"}, "item_type"),         # bad item_type
+        ]:
+            err = assistant._check_arg(a)
+            self.assertIsNotNone(err, a)
+            self.assertIn(key, err, a)
+
+    def test_arg_sig_with_enum(self):
+        t = {"name": "temp_convert",
+             "args": [{"name": "value", "type": "number"},
+                      {"name": "unit", "type": "string", "enum": ["c", "f"]}]}
+        self.assertEqual(assistant._arg_sig(t),
+                         "temp_convert(value: number, unit: string (c|f))")
+
+    def test_arg_sig_empty(self):
+        self.assertEqual(
+            assistant._arg_sig({"name": "bench_reset", "args": []}),
+            "bench_reset()")
+
+    def test_arg_call_sig(self):
+        t = {"name": "temp_convert",
+             "example": {"args": {"value": 100, "unit": "c"}}}
+        self.assertEqual(assistant._arg_call_sig(t),
+                         'temp_convert({value=100, unit="c"})')
+        self.assertEqual(assistant._arg_call_sig({"name": "bench_reset"}),
+                         "bench_reset({})")
+
+
+class ValidateManifestEdgeTests(unittest.TestCase):
+    def test_manifest_not_object(self):
+        m, err = assistant.validate_manifest("[1,2,3]")
+        self.assertIsNone(m)
+        self.assertIn("not a JSON object", err)
+
+    def test_version_must_be_int(self):
+        m, err = assistant.validate_manifest(
+            '{"version":"1","name":"x","tools":[{"name":"a","doc":"d"}]}')
+        self.assertIsNone(m)
+        self.assertIn("version", err)
+
+    def test_mutating_must_be_bool(self):
+        m, err = assistant.validate_manifest(
+            '{"version":1,"name":"x","tools":[{"name":"a","doc":"d",'
+            '"mutating":"yes"}]}')
+        self.assertIsNone(m)
+        self.assertIn("mutating", err)
+
+    def test_arg_missing_name(self):
+        m, err = assistant.validate_manifest(
+            '{"version":1,"name":"x","tools":[{"name":"a","doc":"d",'
+            '"args":[{"type":"number"}]}]}')
+        self.assertIsNone(m)
+        self.assertIn("name", err)
+
+
+class LuaExecLinesKindTests(unittest.TestCase):
+    """lua_exec_lines with kind="tool program" (the error strings name the
+    source kind; the pack path already covers the default)."""
+
+    def test_tool_program_kind_in_error(self):
+        lines, err = assistant.lua_exec_lines(
+            "t = os.time()", kind="tool program")
+        self.assertIsNone(lines)
+        self.assertIn("tool program rejected", err)
+        self.assertIn("os.", err)
+
+    def test_tool_program_max_lines(self):
+        lines, err = assistant.lua_exec_lines(
+            "return 1\nreturn 2", kind="tool program", max_lines=1)
+        self.assertIsNone(lines)
+        self.assertIn("more than 1", err)
+
+
+class ExecToolProgramTests(unittest.TestCase):
+    """exec_tool_program (generate-and-execute) at unit level: multi-line
+    programs, the last line's return is the result, no device, and a
+    mid-program device error."""
+
+    class ListSerial:
+        timeout = 1
+
+        def __init__(self, responses):
+            self.responses = list(responses)
+            self.written = []
+
+        def write(self, b):
+            self.written.append(b)
+
+        def flush(self):
+            pass
+
+        def readline(self):
+            return self.responses.pop(0) if self.responses else b""
+
+        def reset_input_buffer(self):
+            pass
+
+    @staticmethod
+    def lua_ok(result):
+        return ('{"status":"ok","cmd":"lua_exec","result":' + json.dumps(result)
+                + '}\n').encode()
+
+    def _sess(self, serial):
+        sess = assistant.Session.__new__(assistant.Session)
+        sess.tee = unittest.mock.Mock()
+        sess.buf = assistant.DeviceBuffer()
+        sess.s = serial
+        return sess
+
+    def test_multi_line_last_return(self):
+        sim = self.ListSerial([self.lua_ok(""), self.lua_ok("6.00")])
+        ok, result = self._sess(sim).exec_tool_program(
+            "local a = 1\nreturn mean({numbers={3,5,10}})")
+        self.assertTrue(ok)
+        self.assertEqual(result, "6.00")
+        sent = [w.decode().strip() for w in sim.written]
+        self.assertIn("LUA EXEC local a = 1", sent)
+        self.assertIn("LUA EXEC return mean({numbers={3,5,10}})", sent)
+
+    def test_no_device(self):
+        ok, result = self._sess(None).exec_tool_program("return 1")
+        self.assertFalse(ok)
+        self.assertEqual(result, "no device connected")
+
+    def test_device_rejects_line(self):
+        err = ('{"status":"error","cmd":"lua_exec","code":-630,'
+               '"msg":"attempt to call a nil value"}\n').encode()
+        ok, result = self._sess(self.ListSerial([err])).exec_tool_program(
+            "return mean({numbers={1,2,3}})")
+        self.assertFalse(ok)
+        self.assertIn("device rejected", result)
 
 
 if __name__ == "__main__":

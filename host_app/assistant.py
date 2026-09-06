@@ -459,6 +459,38 @@ def validate_manifest(text):
     return obj, None
 
 
+def assemble_manifest_from_source(src):
+    """Reconstruct a pack's manifest JSON host-side from its source, so it
+    can be validated (and name-collision-checked) BEFORE any line is sent
+    to the device (H6.1 AC#2). The manifest() is assembled from
+    string-concatenation lines (VAR = [[...]] / VAR = VAR .. [[...]]), so
+    those literals can be re-joined here. Returns (text, None) or
+    (None, reason)."""
+    var = None
+    for ln in src.splitlines():
+        m = re.match(r"^function\s+manifest\s*\(\s*\)\s*return"
+                     r"\s+([A-Za-z_]\w*)", ln)
+        if m:
+            var = m.group(1)
+            break
+    if var is None:
+        return None, "no manifest() function found in source"
+    parts = None
+    for ln in src.splitlines():
+        v = re.escape(var)
+        m = re.match(r"^%s\s*=\s*\[\[(.*)\]\]$" % v, ln)
+        if m:
+            parts = [m.group(1)]
+            continue
+        if parts is not None:
+            m = re.match(r"^%s\s*=\s*%s\s*\.\.\s*\[\[(.*)\]\]$" % (v, v), ln)
+            if m:
+                parts.append(m.group(1))
+    if parts is None:
+        return None, f"no '{var}' string literal found in source"
+    return "".join(parts), None
+
+
 def _arg_sig(t):
     parts = []
     for a in t.get("args", []):
@@ -1352,6 +1384,23 @@ class Session:
         if err:
             self.tee.say("(" + err + ")")
             return
+        # AC#2: validate the manifest and reject name collisions HOST-SIDE,
+        # before any device line is sent (a rejected pack must leave no
+        # side effects on the device - e.g. an on_adv the device keeps).
+        mtext, asm_err = assemble_manifest_from_source(src)
+        if asm_err is None:
+            m, verr = validate_manifest(mtext)
+            if verr:
+                self.tee.say("(manifest rejected: " + verr + ")")
+                return
+            if any(p["name"] == m["name"] for p in self.tools.packs):
+                self.tee.say(f"(pack '{m['name']}' is already registered)")
+                return
+            clash = {t["name"] for t in m["tools"]} & self.tools.tool_names()
+            if clash:
+                self.tee.say("(name collision with an active pack: "
+                             + ", ".join(sorted(clash)) + ")")
+                return
         # registration is the privileged act (decision 4): confirm-gated
         self.tee.say(f"register pack {path} ({len(lines)} LUA EXEC lines, "
                      "run mode - RAM only, nothing persisted)? [y/N]")

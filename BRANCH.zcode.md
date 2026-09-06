@@ -61,6 +61,13 @@ ALL DONE 2026-09-03 — see the process report
   mean-implementation convention mismatch (`nan`) — both fixed, pinned
   by a host-side pack-assembly replay test; clean full loop archived
   (evidence 01-04); status: awaiting owner review, unmerged
+- 2026-09-06 (deepseek) AC#2 fix: reject tool-pack name collisions and
+  duplicate packs BEFORE any device line is sent (host-side
+  `assemble_manifest_from_source` + a pre-send gate in `do_tools_load`);
+  expanded the suite 79 → 108 (`/tools refresh` branches, empty listing,
+  collision/duplicate before-send, manifest assembly, arg/format helpers,
+  `exec_tool_program`, validation edges); fixed the `PACK` test fixture to
+  follow the demo.lua line convention. Unit 108/108.
 
 ## Merge record (filled at merge time)
 - squash commit: \<sha\> on master
