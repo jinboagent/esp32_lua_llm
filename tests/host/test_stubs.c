@@ -28,6 +28,9 @@ char     stub_upload_end_err[128];
 int      stub_lua_exec_ret;
 char     stub_lua_exec_result[256];
 
+int      stub_lua_compile_ret;
+char     stub_lua_exec_last[512];
+
 bool     stub_power_sleep_enabled;
 
 /* ---- BLE connection stubs (F2.4) ---- */
@@ -47,6 +50,8 @@ uint32_t stub_conn_tx_lines;
 uint32_t stub_conn_dropped;
 uint8_t  stub_conn_peer[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
 bool     stub_conn_power_hold;
+
+static void s_fs_reset(void);      /* fake LittleFS, defined below */
 
 void stub_reset_all(void)
 {
@@ -81,6 +86,11 @@ void stub_reset_all(void)
     stub_conn_tx_lines = 5;
     stub_conn_dropped = 0;
     stub_conn_power_hold = false;
+
+    /* H6.1 M2 */
+    stub_lua_compile_ret = 0;
+    stub_lua_exec_last[0] = '\0';
+    s_fs_reset();
 }
 
 /* ---- BLE ---- */
@@ -177,7 +187,7 @@ int  pipeline_get_stats(pipeline_stats_t *stats)
 /* ---- Lua engine ---- */
 
 void lua_engine_lock(void)       {}
-void lua_engine_unlock(void)     {}
+void lua_engine_unlock(void) {}
 bool lua_engine_is_ready(void)   { return true; }
 void lua_engine_pool_stats(uint32_t *used, uint32_t *peak)
 {
@@ -186,11 +196,134 @@ void lua_engine_pool_stats(uint32_t *used, uint32_t *peak)
 }
 int  lua_engine_init(void)       { return 0; }
 int  lua_engine_deinit(void)     { return 0; }
-int  lua_engine_exec(const char *script, char *result, uint16_t result_len)
+int  lua_engine_compile_check(const char *script, char *err, uint16_t err_len)
 {
     (void)script;
+    if (stub_lua_compile_ret != 0 && err != NULL && err_len > 0)
+        snprintf(err, err_len, "stub compile error near 'X'");
+    return stub_lua_compile_ret;
+}
+int  lua_engine_exec(const char *script, char *result, uint16_t result_len)
+{
+    snprintf(stub_lua_exec_last, sizeof(stub_lua_exec_last), "%s",
+             script != NULL ? script : "");
     snprintf(result, result_len, "%s", stub_lua_exec_result);
     return stub_lua_exec_ret;
+}
+
+/* ---- Fake LittleFS (H6.1 M2 pack tests) ---- */
+
+#define STUB_FS_MAX 16
+typedef struct {
+    char     path[STORAGE_MAX_PATH_LEN];
+    uint8_t  data[STORAGE_MAX_SCRIPT_SIZE];
+    uint32_t len;
+} stub_file_t;
+static stub_file_t s_files[STUB_FS_MAX];
+static int         s_file_count;
+
+static stub_file_t *s_fs_find(const char *path)
+{
+    for (int i = 0; i < s_file_count; i++)
+        if (strcmp(s_files[i].path, path) == 0)
+            return &s_files[i];
+    return NULL;
+}
+
+static void s_fs_reset(void)
+{
+    s_file_count = 0;
+}
+
+const uint8_t *stub_fs_get(const char *path, uint32_t *out_len)
+{
+    stub_file_t *f = s_fs_find(path);
+    if (f == NULL)
+        return NULL;
+    if (out_len != NULL)
+        *out_len = f->len;
+    return f->data;
+}
+
+int stub_fs_count(void)
+{
+    return s_file_count;
+}
+
+int storage_write_file(const char *path, const uint8_t *data, uint32_t len)
+{
+    if (path == NULL || data == NULL) return -702;
+    if (strlen(path) > STORAGE_MAX_PATH_LEN) return -703;
+    if (len > STORAGE_MAX_SCRIPT_SIZE) return -704;
+    stub_file_t *f = s_fs_find(path);
+    if (f == NULL) {
+        if (s_file_count >= STUB_FS_MAX) return -705;
+        f = &s_files[s_file_count++];
+        snprintf(f->path, sizeof(f->path), "%s", path);
+    }
+    memcpy(f->data, data, len);
+    f->len = len;
+    return 0;
+}
+
+int storage_read_file(const char *path, uint8_t *buf, uint32_t buf_len,
+                      uint32_t *out_len)
+{
+    if (path == NULL || buf == NULL || out_len == NULL) return -702;
+    stub_file_t *f = s_fs_find(path);
+    if (f == NULL) return -706;
+    if (f->len > buf_len) return -707;
+    memcpy(buf, f->data, f->len);
+    *out_len = f->len;
+    return 0;
+}
+
+int storage_delete_file(const char *path)
+{
+    for (int i = 0; i < s_file_count; i++) {
+        if (strcmp(s_files[i].path, path) == 0) {
+            memmove(&s_files[i], &s_files[i + 1],
+                    (size_t)(s_file_count - i - 1) * sizeof(stub_file_t));
+            s_file_count--;
+            return 0;
+        }
+    }
+    return -706;
+}
+
+int storage_file_exists(const char *path)
+{
+    return s_fs_find(path) != NULL ? 1 : 0;
+}
+
+int storage_list_dir(const char *path, storage_dirent_t *entries,
+                     uint8_t max_entries, uint8_t *count)
+{
+    if (path == NULL || entries == NULL || count == NULL) return -702;
+    char prefix[STORAGE_MAX_PATH_LEN];
+    int n = snprintf(prefix, sizeof(prefix), "%s/", path);
+    if (n < 0 || (size_t)n >= sizeof(prefix)) return -703;
+    size_t pl = strlen(prefix);
+    uint8_t found = 0;
+    bool dir_seen = false;
+    for (int i = 0; i < s_file_count && found < max_entries; i++) {
+        if (strncmp(s_files[i].path, prefix, pl) != 0)
+            continue;
+        dir_seen = true;
+        const char *nm = s_files[i].path + pl;
+        const char *slash = strrchr(nm, '/');
+        if (slash != NULL)
+            continue;              /* nested paths are not listed */
+        if (strlen(nm) >= STORAGE_MAX_NAME_LEN)
+            continue;
+        snprintf(entries[found].name, STORAGE_MAX_NAME_LEN, "%s", nm);
+        entries[found].size = s_files[i].len;
+        found++;
+    }
+    if (!dir_seen)
+        return -706;               /* directory "does not exist" */
+    *count = found;
+    return 0;
 }
 
 /* ---- Script management ---- */

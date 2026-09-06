@@ -787,7 +787,7 @@ def expected_cmd(line):
     the host tools after the golden-fixture test tripped it)."""
     words = line.split()
     if len(words) >= 2 and words[0] in ("SCAN", "CONN", "SCRIPT", "POWER",
-                                        "LUA"):
+                                        "LUA", "PACK"):
         return (words[0] + "_" + words[1]).lower()
     if words and words[0] in ("STATUS", "VERSION"):
         return words[0].lower()
@@ -883,6 +883,49 @@ def upload_script(s, code, buf):
     return True, "uploaded"
 
 
+def upload_pack(s, name, src, autorun=False, buf=None):
+    """H6.1 M2 pack upload (PACK BEGIN -> paced text lines -> END).
+    Same shape as upload_script: good data lines ack silently; the
+    fail-closed device scan rejects a violating line IMMEDIATELY with
+    -612 (and aborts), so the send loop watches for that instead of a
+    misleading -611 from the PACK END that follows."""
+    r = cmd_json(s, "PACK BEGIN " + name + (" autorun" if autorun else ""),
+                 buf)
+    if not r or r.get("status") != "ok":
+        return False, describe_resp(r)
+    old_timeout = s.timeout
+    s.timeout = 0.12
+    try:
+        for line in src.splitlines():
+            ln = line.rstrip()
+            if not ln.strip():
+                continue
+            s.write((ln + "\n").encode())
+            s.flush()
+            time.sleep(0.05)
+            while True:
+                raw = s.readline()
+                if not raw:
+                    break
+                txt = raw.decode(errors="replace").strip()
+                if not txt:
+                    continue
+                if buf is not None:
+                    buf.add_line(txt)
+                if txt.startswith("{") and '"status":"error"' in txt:
+                    try:
+                        return False, describe_resp(json.loads(txt))
+                    except (json.JSONDecodeError, ValueError):
+                        return False, txt
+        time.sleep(0.3)
+    finally:
+        s.timeout = old_timeout
+    r = cmd_json(s, "PACK END", buf)
+    if not r or r.get("status") != "ok":
+        return False, describe_resp(r)
+    return True, "stored"
+
+
 def stop_all(s, tee, buf):
     """Orderly cleanup on every exit path (N3: port closes after this).
     Errors here are expected when a plane is already idle; they are
@@ -911,7 +954,9 @@ commands:
   /deploy          re-offer the last Lua artifact
   /tools           list registered tool packs (H6.1 tool registry)
   /tools refresh   re-read the manifest from the device
-  /tools load <f>  register a tool pack (confirm-gated, session-scoped)
+  /tools load <f>  register a local pack file (confirm-gated, run mode)
+  /tools load @n   activate a device-stored pack (confirm-gated)
+  /tools persist <name> [autorun]  store the active pack on the device
   /history         conversation summary
   /help            this text
   /quit            cleanup and exit (Ctrl+C does the same)
@@ -1317,6 +1362,16 @@ class Session:
             result = out or "(no return value)"
         return True, result
 
+    def device_packs(self):
+        """H6.1 M2: PACK LIST -> the persisted packs (or None when the
+        device/feature is unavailable)."""
+        if self.s is None:
+            return None
+        r = cmd_json(self.s, "PACK LIST", self.buf)
+        if not r or r.get("status") != "ok":
+            return None
+        return r.get("packs", [])
+
     def do_tools(self, arg):
         parts = arg.split()
         if not parts:
@@ -1326,13 +1381,26 @@ class Session:
                              "host_app/tool_packs/demo.lua)")
             else:
                 self.tee.say(self.tools.describe())
+            stored = self.device_packs()
+            if stored:
+                marks = []
+                for p in stored:
+                    active = any(pk["name"] == p.get("name")
+                                 for pk in self.tools.packs)
+                    marks.append(str(p.get("name"))
+                                 + (" (autorun)" if p.get("autorun") else "")
+                                 + (" [active]" if active else ""))
+                self.tee.say("device packs (persisted): " + ", ".join(marks))
             return
         if parts[0] == "refresh":
             self.do_tools_refresh()
         elif parts[0] == "load" and len(parts) >= 2:
             self.do_tools_load(" ".join(parts[1:]))
+        elif parts[0] == "persist" and len(parts) >= 2:
+            self.do_tools_persist(" ".join(parts[1:]))
         else:
-            self.tee.say("usage: /tools [ | refresh | load <file.lua> ]")
+            self.tee.say("usage: /tools [ | refresh | load <file.lua> | "
+                         "load @<device-pack> | persist <name> [autorun] ]")
 
     def do_tools_refresh(self):
         if self.tools.is_empty():
@@ -1365,6 +1433,10 @@ class Session:
                      "the registry - /tools load it to register)")
 
     def do_tools_load(self, path):
+        if path.startswith("@"):
+            # H6.1 M2: activate a device-stored pack (PACK RUN)
+            self.do_tools_run_device(path[1:])
+            return
         if self.s is None:
             self.tee.say("(no device - packs are registered on the device)")
             return
@@ -1435,6 +1507,106 @@ class Session:
         self.tee.say(f"(pack '{m['name']}' registered: {len(m['tools'])} "
                      "tools, run mode)")
         self.tee.say(self.tools.describe())
+
+    def do_tools_run_device(self, name):
+        """H6.1 M2: activate a device-stored pack (PACK RUN) and register
+        it from the served manifest — the "different PC" flow: tools
+        without the local pack file."""
+        if self.s is None:
+            self.tee.say("(no device)")
+            return
+        if not IDENT_RE.match(name):
+            self.tee.say("(invalid pack name: " + name + ")")
+            return
+        stored = self.device_packs() or []
+        if stored and not any(p.get("name") == name for p in stored):
+            self.tee.say("(no such device pack; stored: "
+                         + ", ".join(str(p.get("name")) for p in stored)
+                         + ")")
+            return
+        # executing stored code is an explicit act: confirm-gated
+        self.tee.say(f"activate stored pack '{name}' on the device? [y/N]")
+        line = self.wait_for_line()
+        if line is None:
+            self.tee.say("(input closed - pack not activated)")
+            return
+        self.tee.say(f"  confirm> {line}")
+        if line.strip().lower() not in ("y", "yes"):
+            self.tee.say("(aborted)")
+            return
+        r = cmd_json(self.s, "PACK RUN " + name, self.buf)
+        if not (r and r.get("status") == "ok"):
+            self.tee.say("(PACK RUN failed: " + describe_resp(r) + ")")
+            return
+        text, err = self.fetch_manifest()
+        if err:
+            self.tee.say("(pack ran but the manifest fetch failed: "
+                         + err + ")")
+            return
+        m, verr = validate_manifest(text)
+        if verr:
+            self.tee.say("(manifest rejected: " + verr + ")")
+            return
+        pack, cerr = self.tools.add(m, "device:" + name)
+        if cerr:
+            self.tee.say("(" + cerr + ")")
+            return
+        self.tee.say(f"(pack '{m['name']}' registered: {len(m['tools'])} "
+                     "tools, from device storage)")
+        self.tee.say(self.tools.describe())
+
+    def do_tools_persist(self, args):
+        """H6.1 M2: persist an ACTIVE pack to device storage (PACK
+        upload; optional autorun = boot-time activation, decision 13's
+        seam)."""
+        parts = args.split()
+        if not parts:
+            self.tee.say("usage: /tools persist <name> [autorun]")
+            return
+        name = parts[0]
+        autorun = len(parts) > 1 and parts[1].lower() == "autorun"
+        if self.s is None:
+            self.tee.say("(no device)")
+            return
+        pack = next((p for p in self.tools.packs if p["name"] == name),
+                    None)
+        if pack is None or pack["file"].startswith("device:"):
+            self.tee.say(f"(pack '{name}' is not registered from a local "
+                         "file this session - /tools load it first)")
+            return
+        try:
+            with open(pack["file"], encoding="utf-8") as f:
+                src = f.read()
+        except OSError as e:
+            self.tee.say(f"(cannot read {pack['file']}: {e})")
+            return
+        lines, err = lua_exec_lines(src, kind="pack")
+        if err:
+            self.tee.say("(" + err + ")")
+            return
+        self.tee.say("persist pack '" + name + "' to device storage"
+                     + (" and run it at every boot" if autorun else "")
+                     + "? [y/N]")
+        line = self.wait_for_line()
+        if line is None:
+            self.tee.say("(input closed - nothing persisted)")
+            return
+        self.tee.say(f"  confirm> {line}")
+        if line.strip().lower() not in ("y", "yes"):
+            self.tee.say("(aborted - nothing was sent)")
+            return
+        ok, detail = upload_pack(self.s, name, src, autorun, self.buf)
+        if not ok:
+            self.tee.say("(persist rejected by the device: " + detail + ")")
+            return
+        stored = self.device_packs() or []
+        for p in stored:
+            if p.get("name") == name:
+                self.tee.say(f"(pack '{name}' stored on the device, "
+                             f"{p.get('size', '?')} bytes, autorun "
+                             f"{'on' if p.get('autorun') else 'off'})")
+                return
+        self.tee.say("(pack stored)")
 
     def handle_line(self, line):
         line = line.strip()

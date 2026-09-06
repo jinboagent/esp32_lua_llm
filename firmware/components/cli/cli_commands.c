@@ -23,6 +23,7 @@
 #include "script_if.h"
 #include "storage_if.h"
 #include "bridge_if.h"
+#include "pack_if.h"
 #include "power_if.h"
 #include "json_if.h"
 
@@ -642,6 +643,161 @@ static int h_script(const char *action, char *response, uint16_t response_len)
                           "SCRIPT LOAD|BEGIN|CHUNK|END|RUN|STOP|STATUS");
 }
 
+/* ---- PACK (H6.1 M2: tool-pack storage + boot autorun) ------------------- */
+
+static int h_pack(const char *action, char *response, uint16_t response_len)
+{
+    if (strcmp(action, "LIST") == 0) {
+        int ret = pack_store_list(response, response_len);
+        if (ret != 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_list\",\"code\":%d}",
+                ret);
+        }
+        return 0;
+    }
+
+    if (strncmp(action, "BEGIN ", 6) == 0) {
+        const char *name = action + 6;
+        bool autorun = false;
+        char nbuf[PACK_MAX_NAME + 1];
+        const char *sp = strchr(name, ' ');
+        if (sp != NULL) {
+            size_t nl = (size_t)(sp - name);
+            if (nl == 0 || nl >= sizeof(nbuf))
+                return s_syntax_error(response, response_len,
+                                      "PACK BEGIN <name> [autorun]");
+            memcpy(nbuf, name, nl);
+            nbuf[nl] = '\0';
+            name = nbuf;
+            if (strcmp(sp + 1, "autorun") == 0 ||
+                strcmp(sp + 1, "AUTORUN") == 0) {
+                autorun = true;
+            } else {
+                return s_syntax_error(response, response_len,
+                                      "PACK BEGIN <name> [autorun]");
+            }
+        }
+        char err[96];
+        int ret = pack_store_upload_begin(name, autorun, err, sizeof(err));
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_begin\","
+                "\"msg\":\"ready\",\"autorun\":%s}",
+                autorun ? "true" : "false");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_begin\","
+                "\"code\":%d,\"msg\":\"%s\"}", ret, err);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "END") == 0) {
+        uint32_t size = 0;
+        char err[96];
+        int ret = pack_store_upload_finish(&size, err, sizeof(err));
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_end\",\"size\":%lu}",
+                (unsigned long)size);
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_end\","
+                "\"code\":%d,\"msg\":\"%s\"}", ret, err);
+        }
+        return 0;
+    }
+
+    if (strncmp(action, "RUN ", 4) == 0) {
+        char err[96];
+        char result[LUA_RESULT_MAX_LEN] = {0};
+        int ret = pack_store_run(action + 4, result, sizeof(result),
+                                 err, sizeof(err));
+        if (ret == 0) {
+            char esc[LUA_RESULT_MAX_LEN * 2];
+            json_escape_str(result[0] ? result : "", esc, sizeof(esc));
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_run\","
+                "\"result\":\"%s\"}", esc);
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_run\","
+                "\"code\":%d,\"msg\":\"%s\"}", ret, err);
+        }
+        return 0;
+    }
+
+    if (strncmp(action, "DEL ", 4) == 0) {
+        int ret = pack_store_del(action + 4);
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_del\"}");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_del\",\"code\":%d}",
+                ret);
+        }
+        return 0;
+    }
+
+    if (strncmp(action, "AUTORUN ", 8) == 0) {
+        const char *rest = action + 8;
+        const char *sp = strchr(rest, ' ');
+        char nbuf[PACK_MAX_NAME + 1];
+        bool on = false, have = false;
+        if (sp != NULL) {
+            size_t nl = (size_t)(sp - rest);
+            if (nl > 0 && nl < sizeof(nbuf)) {
+                memcpy(nbuf, rest, nl);
+                nbuf[nl] = '\0';
+                if (strcmp(sp + 1, "ON") == 0) { on = true; have = true; }
+                else if (strcmp(sp + 1, "OFF") == 0) { on = false; have = true; }
+            }
+        }
+        if (!have)
+            return s_syntax_error(response, response_len,
+                                  "PACK AUTORUN <name> ON|OFF");
+        int ret = pack_store_set_autorun(nbuf, on);
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_autorun\","
+                "\"autorun\":%s}", on ? "true" : "false");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_autorun\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+        "PACK LIST|BEGIN <name> [autorun]|END|RUN <name>|DEL <name>|"
+        "AUTORUN <name> ON|OFF");
+}
+
+/* One data line during a PACK upload (mirrors the F4.2 bridge: silent
+ * ack on success; a rejection answers immediately and aborts). */
+static int h_pack_data_line(const char *line, char *response,
+                            uint16_t response_len)
+{
+    const char *tok = NULL;
+    int ret = pack_store_upload_line(line, (uint32_t)strlen(line), &tok);
+    if (ret == 0) {
+        response[0] = '\0';
+        return 0;
+    }
+    if (ret == -612 && tok != NULL) {
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"pack_data\",\"code\":-612,"
+            "\"msg\":\"sandbox violation: '%s' is not allowed\"}", tok);
+        return 0;
+    }
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"error\",\"cmd\":\"pack_data\",\"code\":%d}", ret);
+    return 0;
+}
+
 /* ---- POWER (extension commands for F4.3 observability/control) --------- */
 
 static int h_power(const char *action, char *response, uint16_t response_len)
@@ -848,8 +1004,8 @@ static int h_conn(const char *action, char *response, uint16_t response_len)
 static bool s_is_cli_command(const char *cmd)
 {
     static const char * const cmds[] = {
-        "STATUS", "VERSION", "SCAN", "FILTER", "LUA", "SCRIPT", "POWER",
-        "CONN", NULL
+        "STATUS", "VERSION", "SCAN", "FILTER", "LUA", "SCRIPT", "PACK",
+        "POWER", "CONN", NULL
     };
     for (int i = 0; cmds[i] != NULL; i++) {
         size_t n = strlen(cmds[i]);
@@ -927,6 +1083,17 @@ int cli_process_command(const char *cmd, char *response, uint16_t response_len)
                 cmd, (uint32_t)strlen(cmd), response, response_len);
     }
 
+    /* H6.1 M2 pack upload: same shape as the F4.2 bridge above. Any
+     * recognized CLI command mid-upload aborts the pack session. */
+    if (pack_store_is_uploading()) {
+        if (strcmp(cmd, "PACK END") == 0)
+            return h_pack("END", response, response_len);
+        if (s_is_cli_command(cmd))
+            pack_store_abort();
+        else
+            return h_pack_data_line(cmd, response, response_len);
+    }
+
     if (strcmp(cmd, "STATUS") == 0)
         return h_status(response, response_len);
 
@@ -955,6 +1122,13 @@ int cli_process_command(const char *cmd, char *response, uint16_t response_len)
                               "SCRIPT LOAD|BEGIN|CHUNK|END|RUN|STOP|STATUS");
     if (strncmp(cmd, "SCRIPT ", 7) == 0)
         return h_script(cmd + 7, response, response_len);
+
+    if (strcmp(cmd, "PACK") == 0)
+        return s_syntax_error(response, response_len,
+            "PACK LIST|BEGIN <name> [autorun]|END|RUN <name>|DEL <name>|"
+            "AUTORUN <name> ON|OFF");
+    if (strncmp(cmd, "PACK ", 5) == 0)
+        return h_pack(cmd + 5, response, response_len);
 
     if (strcmp(cmd, "POWER") == 0)
         return s_syntax_error(response, response_len,

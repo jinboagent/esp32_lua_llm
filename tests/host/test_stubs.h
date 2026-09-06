@@ -32,6 +32,14 @@ extern char     stub_upload_end_err[128];
 extern int      stub_lua_exec_ret;
 extern char     stub_lua_exec_result[256];
 
+/* H6.1 M2: compile-check stub return + last exec'd script capture */
+extern int      stub_lua_compile_ret;
+extern char     stub_lua_exec_last[512];
+
+/* H6.1 M2: fake LittleFS backed by the storage stubs */
+const uint8_t  *stub_fs_get(const char *path, uint32_t *out_len);
+int             stub_fs_count(void);
+
 /* power stub controls */
 extern bool     stub_power_sleep_enabled;
 

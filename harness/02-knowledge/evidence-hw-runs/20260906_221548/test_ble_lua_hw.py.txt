@@ -1,0 +1,59 @@
+=== BLE + Lua data-plane suite on COM12 ===
+
+[L1] sanity
+  [PASS] VERSION is 1.0.0
+  [PASS] STATUS schema complete
+[L2] baseline ambient capture (8 s)
+  [PASS] SCAN START ok
+  [PASS] advertisements received
+  [PASS] JSON fields addr/rssi/ts/type present
+  [PASS] addr format AA:BB:CC:DD:EE:FF
+  [PASS] addr_type is public|random
+  [PASS] rssi in plausible range
+  [PASS] ts monotonically non-decreasing
+  [PASS] dedup window holds (>=~1 s between repeats)
+[L3] Lua sandbox on target
+  [PASS] os is nil in sandbox
+  [PASS] io is nil in sandbox
+  [PASS] debug is nil in sandbox
+  [PASS] package is nil in sandbox
+  [PASS] load removed
+  [PASS] string lib works
+  [PASS] table lib works
+  [PASS] math lib works
+  [PASS] syntax error -> -612 with VALID JSON response
+  [PASS] infinite loop -> -614 timeout
+[L4] on_adv ABI (firmware must pass 7 args)
+  [PASS] upload introspection script
+  [PASS] SCRIPT RUN while scanning
+  [PASS] on_adv receives 7 arguments
+  [PASS] arg types start string,number,number
+  [PASS] SCRIPT STOP ok
+[L5] suppress-all hook -> zero adv lines
+  [PASS] upload suppress-all script
+  [PASS] SCRIPT RUN ok
+  [PASS] stream fully suppressed (0 lines)
+[L8] SCRIPT STOP restores default stream
+  [PASS] SCRIPT STOP ok
+  [PASS] stream resumes after stop
+[L6] legacy 3-arg script (stale test_hooks.py behavior)
+  [PASS] upload legacy 3-arg script
+  [PASS] SCRIPT RUN ok
+  [PASS] legacy script leaks unnamed devices (intent was to filter them)
+[L7] transform hook rewrites outgoing JSON
+  [PASS] upload transform script
+  [PASS] SCRIPT RUN ok
+  [PASS] transform output received
+  [PASS] every line carries hooked marker
+  [PASS] SCRIPT STOP ok
+  [PASS] marker gone after stop
+[L9] overlong line robustness (USB RX buffer = 256)
+  [PASS] device still answers after 300-char line
+  [PASS] INFO: line tail re-parsed as command (expected -504 drain-to-EOL)
+[L10] Ctrl+C single-byte interrupt
+  [PASS] scan active for interrupt test
+  [PASS] stream stops after 0x03
+  [PASS] state idle after interrupt
+  [PASS] final STATUS ok
+
+45 passed, 0 failed

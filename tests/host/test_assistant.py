@@ -1508,5 +1508,130 @@ class ExecToolProgramTests(unittest.TestCase):
         self.assertIn("device rejected", result)
 
 
+# ---- H6.1 M2: pack persistence host surface ----------------------------------
+
+class UploadPackTests(unittest.TestCase):
+    """upload_pack mirrors upload_script: silent data acks, PACK BEGIN
+    carries the autorun flag, a violating line aborts with -612 and no
+    PACK END is attempted."""
+
+    PACK_BEGIN_OK = (b'{"status":"ok","cmd":"pack_begin",'
+                     b'"msg":"ready","autorun":false}\n')
+    PACK_END_OK = b'{"status":"ok","cmd":"pack_end","size":7}\n'
+    REJECT = (b'{"status":"error","cmd":"pack_data","code":-612,'
+              b'"msg":"sandbox violation: \'os.\' is not allowed"}\n')
+
+    def sent(self, sim):
+        return [w.decode().strip() for w in sim.written]
+
+    def test_clean_upload(self):
+        sim = FetchManifestTests.FakeSerial(
+            [self.PACK_BEGIN_OK, b"", self.PACK_END_OK])
+        ok, detail = assistant.upload_pack(sim, "demo", "a1 = 1", False,
+                                           None)
+        self.assertTrue(ok)
+        self.assertEqual(detail, "stored")
+        self.assertEqual(self.sent(sim),
+                         ["PACK BEGIN demo", "a1 = 1", "PACK END"])
+
+    def test_autorun_flag_on_begin(self):
+        sim = FetchManifestTests.FakeSerial(
+            [self.PACK_BEGIN_OK, b"", self.PACK_END_OK])
+        assistant.upload_pack(sim, "demo", "a1 = 1", True, None)
+        self.assertIn("PACK BEGIN demo autorun", self.sent(sim))
+
+    def test_forbidden_line_surfaces_minus_612(self):
+        sim = FetchManifestTests.FakeSerial(
+            [self.PACK_BEGIN_OK, self.REJECT])
+        ok, detail = assistant.upload_pack(sim, "demo", "t = os.time()",
+                                           False, None)
+        self.assertFalse(ok)
+        self.assertIn("-612", detail)
+        # aborted at the offending line: no PACK END attempt
+        self.assertNotIn("PACK END", self.sent(sim))
+
+    def test_expected_cmd_maps_pack_family(self):
+        self.assertEqual(assistant.expected_cmd("PACK BEGIN demo"),
+                         "pack_begin")
+        self.assertEqual(assistant.expected_cmd("PACK LIST"), "pack_list")
+        self.assertEqual(assistant.expected_cmd("PACK RUN x"), "pack_run")
+
+
+class PackReplTests(ToolReplTests):
+    """M2 session flows: /tools persist (wire = PACK BEGIN/END with raw
+    text lines), /tools load @name activating device storage, /tools
+    showing device packs, unknown @pack guidance."""
+
+    @staticmethod
+    def jline(obj):
+        return (json.dumps(obj, separators=(",", ":")) + "\n").encode()
+
+    def m2_responses(self):
+        r = dict(self.lua_pack_responses())
+        begin = self.jline({"status": "ok", "cmd": "pack_begin",
+                            "msg": "ready", "autorun": True})
+        r["PACK BEGIN tpack"] = [begin]
+        r["PACK BEGIN tpack autorun"] = [begin]
+        r["PACK END"] = [self.jline(
+            {"status": "ok", "cmd": "pack_end", "size": 118})]
+        r["PACK LIST"] = [self.jline(
+            {"status": "ok", "cmd": "pack_list",
+             "packs": [{"name": "tpack", "size": 118, "autorun": True}],
+             "free": 30000})]
+        r["PACK RUN tpack"] = [self.jline(
+            {"status": "ok", "cmd": "pack_run", "result": ""})]
+        return r
+
+    def test_tools_persist_flow(self):
+        sim = DeviceSimSerial(self.m2_responses())
+        pack = self.write_pack()
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "y",
+             "/tools persist tpack autorun", "y", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("persist pack 'tpack' to device storage", log)
+        self.assertIn("and run it at every boot", log)
+        self.assertIn("confirm> y", log)
+        self.assertIn("pack 'tpack' stored on the device", log)
+        self.assertIn("autorun on", log)
+        # the wire: PACK BEGIN with the flag, raw text lines (no LUA
+        # EXEC prefix - the device scans them itself), PACK END
+        self.assertIn("PACK BEGIN tpack autorun", sim.written)
+        self.assertIn("function manifest() return TM end", sim.written)
+        self.assertIn("PACK END", sim.written)
+
+    def test_tools_persist_declined(self):
+        sim = DeviceSimSerial(self.m2_responses())
+        pack = self.write_pack()
+        rc, log = self.run_session(
+            [f"/tools load {pack}", "y",
+             "/tools persist tpack", "n", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("(aborted - nothing was sent)", log)
+        self.assertFalse([w for w in sim.written
+                          if w.startswith("PACK BEGIN")])
+
+    def test_tools_load_at_name_registers_from_device(self):
+        sim = DeviceSimSerial(self.m2_responses())
+        rc, log = self.run_session(
+            ["/tools load @tpack", "y", "/tools", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("activate stored pack 'tpack'", log)
+        self.assertIn("confirm> y", log)
+        self.assertIn("pack 'tpack' registered: 1 tools, "
+                      "from device storage", log)
+        self.assertIn("PACK RUN tpack", sim.written)
+        self.assertIn("device packs (persisted): tpack (autorun) "
+                      "[active]", log)
+
+    def test_tools_at_unknown_pack_guides(self):
+        sim = DeviceSimSerial(self.m2_responses())
+        rc, log = self.run_session(
+            ["/tools load @ghost", "/quit"], sim)
+        self.assertEqual(rc, 0)
+        self.assertIn("no such device pack; stored: tpack", log)
+        self.assertNotIn("PACK RUN ghost", sim.written)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

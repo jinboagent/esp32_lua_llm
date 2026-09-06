@@ -1,0 +1,147 @@
+=== PuTTY-style session transcript (CR endings) ===
+> STATUS
+
+{"status":"ok","cmd":"status","state":"idle","reset_reason":11,"scanning":false,"queue_drops":0,"filter_count":0,"lua_ready":true,"script_loaded":false,"script_running":false,"free_storage":49152,"free_heap":98688,"lua_pool":{"used":11816,"peak":11844},"pipeline":{"received":0,"filtered":0,"output":0,"parse_err":0,"encode_err":0},"conn":{"enabled":true,"state":"off","active":false,"addr":"00:00:00:00:00:00","tx_lines":0,"dropped":0},"v":1}
+
+
+> VERSION
+
+{"status":"ok","cmd":"version","firmware":"1.0.0","build_date":"Sep  6 2026","chip":"esp32s3"}
+
+
+> SCAN START
+
+[0;32mI (2634) NimBLE: GAP procedure initiated: discovery; [0m
+
+[0;32mI (2634) NimBLE: own_addr_type=0 filter_policy=0 passive=1 limited=0 filter_duplicates=0 [0m
+
+[0;32mI (2635) NimBLE: duration=forever[0m
+
+[0;32mI (2635) NimBLE: 
+
+[0m
+
+BLE: passive scan started (interval=100ms, window=50ms)
+
+Pipeline: started
+
+{"status":"ok","cmd":"scan_start"}
+
+{"ts":2640,"addr":"F5:7B:1A:8E:7B:71","type":"random","rssi":-68,"name":null,"uuids":[],"manu":{"id":"004C","data":"10062E1DB8C4DB28"},"tx_power":12,"flags":"1A"}
+
+{"ts":2660,"addr":"D7:F6:F7:01:CB:04","type":"public","rssi":-79,"name":null,"uuids":[],"manu":{"id":"0075","data":"021844A1BBE05AE7DEB996FEE1ECC20097C82695660B121B"},"flags":"18"}
+
+{"ts":2669,"addr":"F9:F0:EF:D7:C1:5C","type":"public","rssi":-89,"name":null,"uuids":[],"manu":{"id":"0075","data":"42040180665CC1D7EFF0F95EC1D7EFF0F801000000000000"}}
+
+{"ts":2673,"addr":"AE:A4:F6:42:D0:C1","type":"random","rssi":-82,"name":"LHB-0B05EA98","uuids":[],"manu":{"id":"055D","data":"00020101000600"},"flags":"06"}
+
+{"ts":2784,"addr":"1E:C0:0A:AE:94:1E","type":"random","rssi":-90,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092022A7DF5082EDAF0D122C809F41819BCD4215DBBD4C2D517F"}}
+
+{"ts":2849,"addr":"89:E5:66:1D:0E:42","type":"random","rssi":-60,"name":null,"uuids":["180A"],"manu":null,"flags":"1A"}
+
+{"ts":2852,"addr":"25:18:C4:FE:D0:1B","type":"random","rssi":-60,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092002ADDA56F2E976BE3177C21A36172099E9B2CC38BAC41DC6"}}
+
+{"ts":2863,"addr":"5B:1A:D6:0E:F0:75","type":"random","rssi":-63,"name":null,"uuids":[],"manu":{"id":"004C","data":"1007341F4308D2B838"},"tx_power":12,"flags":"1A"}
+
+{"ts":2942,"addr":"DC:A3:DE:25:3B:E6","type":"random","rssi":-91,"name":null,"uuids":[],"manu":{"id":"0087","data":"086E"},"flags":"06"}
+
+{"ts":2948,"addr":"59:C3:F7:71:8A:7C","type":"random","rssi":-88,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":3038,"addr":"5A:3F:12:FD:4C:D2","type":"random","rssi":-95,"name":null,"uuids":[],"manu":{"id":"004C","data":"12020003"}}
+
+{"ts":3045,"addr":"53:89:A4:D0:73:7D","type":"random","rssi":-93,"name":null,"uuids":[],"manu":{"id":"004C","data":"071901132023998F01000520DF41D0F64550B97BCE169D4DA9EAB1"}}
+
+{"ts":3152,"addr":"E4:C4:05:9B:9F:57","type":"random","rssi":-91,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":3469,"addr":"5A:59:72:29:43:CF","type":"random","rssi":-83,"name":null,"uuids":[],"manu":{"id":"004C","data":"0711061019C217EFECDF6445BF72F43AE89C3D"}}
+
+{"ts":3565,"addr":"78:5E:4A:F6:34:71","type":"random","rssi":-95,"name":null,"uuids":["FE9F"],"manu":null}
+
+
+[scan stream: 34 adv lines in 2 s]
+sample: {"ts":6634,"addr":"47:3C:97:89:43:4F","type":"random","rssi":-90,"name":null,"uuids":["FE3C"],"manu":{"id":"000A","data":"474200352B0C495321BD2D30B197
+> STATUS
+
+{"status":"ok","cmd":"status","state":"scanning","reset_reason":11,"scanning":true,"queue_drops":0,"filter_count":0,"lua_ready":true,"script_loaded":false,"script_running":false,"free_storage":49152,"free_heap":96976,"lua_pool":{"used":11816,"peak":11844},"pipeline":{"received":86,"filtered":0,"output":86,"parse_err":0,"encode_err":0},"conn":{"enabled":true,"state":"off","active":false,"addr":"00:00:00:00:00:00","tx_lines":0,"dropped":0},"v":1}
+
+{"ts":9750,"addr":"47:3C:97:89:43:4F","type":"random","rssi":-85,"name":null,"uuids":["FE3C"],"manu":{"id":"000A","data":"474200352B0C495321BD2D30B1979710763CD10C"}}
+
+{"ts":9752,"addr":"D7:F6:F7:01:CB:04","type":"public","rssi":-79,"name":null,"uuids":[],"manu":{"id":"0075","data":"021844A1BBE05AE7DEB996FEE1ECC20097C82695660B121B"},"flags":"18"}
+
+{"ts":9758,"addr":"5B:1A:D6:0E:F0:75","type":"random","rssi":-66,"name":null,"uuids":[],"manu":{"id":"004C","data":"1007341F4308D2B838"},"tx_power":12,"flags":"1A"}
+
+{"ts":9979,"addr":"89:E5:66:1D:0E:42","type":"random","rssi":-46,"name":null,"uuids":["180A"],"manu":null,"flags":"1A"}
+
+{"ts":10175,"addr":"53:89:A4:D0:73:7D","type":"random","rssi":-94,"name":null,"uuids":[],"manu":{"id":"004C","data":"071901132023998F01000520DF41D0F64550B97BCE169D4DA9EAB1"}}
+
+{"ts":10245,"addr":"AE:A4:F6:42:D0:C1","type":"random","rssi":-78,"name":"LHB-0B05EA98","uuids":[],"manu":{"id":"055D","data":"00020101000600"},"flags":"06"}
+
+{"ts":10335,"addr":"1E:C0:0A:AE:94:1E","type":"random","rssi":-90,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092022A7DF5082EDAF0D122C809F41819BCD4215DBBD4C2D517F"}}
+
+{"ts":10345,"addr":"F5:7B:1A:8E:7B:71","type":"random","rssi":-68,"name":null,"uuids":[],"manu":{"id":"004C","data":"10062E1DB8C4DB28"},"tx_power":12,"flags":"1A"}
+
+{"ts":10370,"addr":"25:18:C4:FE:D0:1B","type":"random","rssi":-51,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092002ADDA56F2E976BE3177C21A36172099E9B2CC38BAC41DC6"}}
+
+{"ts":10476,"addr":"59:C3:F7:71:8A:7C","type":"random","rssi":-87,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":10556,"addr":"DC:A3:DE:25:3B:E6","type":"random","rssi":-97,"name":null,"uuids":[],"manu":{"id":"0087","data":"086E"},"flags":"06"}
+
+
+> SCAN STOP
+
+Pipeline: stopped (received=97, filtered=0, output=97, parse_err=0, encode_err=0)
+
+Pipeline: stack high-water mark: 564 bytes free
+
+BLE: scan stopped
+
+{"status":"ok","cmd":"scan_stop"}
+
+
+> SCAN START
+
+[0;32mI (11653) NimBLE: GAP procedure initiated: discovery; [0m
+
+[0;32mI (11653) NimBLE: own_addr_type=0 filter_policy=0 passive=1 limited=0 filter_duplicates=0 [0m
+
+[0;32mI (11654) NimBLE: duration=forever[0m
+
+[0;32mI (11654) NimBLE: 
+
+[0m
+
+BLE: passive scan started (interval=100ms, window=50ms)
+
+Pipeline: started
+
+{"status":"ok","cmd":"scan_start"}
+
+{"ts":11659,"addr":"53:89:A4:D0:73:7D","type":"random","rssi":-86,"name":null,"uuids":[],"manu":{"id":"004C","data":"071901132023998F01000520DF41D0F64550B97BCE169D4DA9EAB1"}}
+
+{"ts":11660,"addr":"E4:C4:05:9B:9F:57","type":"random","rssi":-87,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":11670,"addr":"25:18:C4:FE:D0:1B","type":"random","rssi":-47,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092002ADDA56F2E976BE3177C21A36172099E9B2CC38BAC41DC6"}}
+
+{"ts":11672,"addr":"89:E5:66:1D:0E:42","type":"random","rssi":-48,"name":null,"uuids":["180A"],"manu":null,"flags":"1A"}
+
+{"ts":11676,"addr":"DC:A3:DE:25:3B:E6","type":"random","rssi":-95,"name":null,"uuids":[],"manu":{"id":"0087","data":"086E"},"flags":"06"}
+
+{"ts":11676,"addr":"5B:1A:D6:0E:F0:75","type":"random","rssi":-51,"name":null,"uuids":[],"manu":{"id":"004C","data":"1007341F4308D2B838"},"tx_power":12,"flags":"1A"}
+
+{"ts":11677,"addr":"AE:A4:F6:42:D0:C1","type":"random","rssi":-84,"name":"LHB-0B05EA98","uuids":[],"manu":{"id":"055D","data":"00020101000600"},"flags":"06"}
+
+{"ts":11699,"addr":"D7:F6:F7:01:CB:04","type":"public","rssi":-79,"name":null,"uuids":[],"manu":{"id":"0075","data":"021844A1BBE05AE7DEB996FEE1ECC20097C82695660B121B"},"flags":"18"}
+
+{"ts":11782,"addr":"59:C3:F7:71:8A:7C","type":"random","rssi":-94,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":11986,"addr":"F5:7B:1A:8E:7B:71","type":"random","rssi":-67,"name":null,"uuids":[],"manu":{"id":"004C","data":"10062E1DB8C4DB28"},"tx_power":12,"flags":"1A"}
+
+
+[Ctrl+C] interrupt response: PASS
+[Ctrl+C] stream stopped: PASS (0 adv after)
+> STATUS
+
+{"status":"ok","cmd":"status","state":"idle","reset_reason":11,"scanning":false,"queue_drops":0,"filter_count":0,"lua_ready":true,"script_loaded":false,"script_running":false,"free_storage":49152,"free_heap":96976,"lua_pool":{"used":11816,"peak":11844},"pipeline":{"received":132,"filtered":0,"output":132,"parse_err":0,"encode_err":0},"conn":{"enabled":true,"state":"off","active":false,"addr":"00:00:00:00:00:00","tx_lines":0,"dropped":0},"v":1}
+
+
+=== end ===

@@ -1,0 +1,48 @@
+=== assistant session (2026-09-06 22:21) ===
+llm backend: qwen3.8-27b  (config: environment variables (unset LLM_API_KEY to use .llm_env))
+system prompt: built-in
+transcript: E:\agent\esp32_lua_llm\assistant_20260906_222133.log
+mode boundary:
+  adv lines (addr/type/rssi/...) -> Lua artifacts allowed (on_adv/transform hooks)
+  conn lines (src:"conn")       -> analysis only (they bypass the Lua hooks)
+device: idle  (/scan on to start)
+(buffer: 0 adv lines (0 addresses), 0 conn lines, 1 invalid dropped)
+type /help for commands; /quit exits
+you: /tools load demo.lua
+register pack E:\agent\esp32_lua_llm\host_app\tool_packs\demo.lua (18 LUA EXEC lines, run mode - RAM only, nothing persisted)? [y/N]
+  confirm> y
+(pack 'demo' registered: 3 tools, run mode)
+tools: 1 pack(s), 3 tool(s) (session-scoped: re-load after a reboot)
+  demo  (E:\agent\esp32_lua_llm\host_app\tool_packs\demo.lua)
+    mean(numbers: table) -> string
+      Arithmetic mean of a table of numbers.
+      example: mean({numbers=[3, 5, 10]}) -> "6.00"
+    temp_convert(value: number, unit: string (c|f)) -> string
+      Temperature conversion: unit 'c' returns Fahrenheit, 'f' returns Celsius.
+      example: temp_convert({value=100, unit="c"}) -> "212.0F"
+    bench_reset() -> ack  [mutating]
+      Reset the pack's demo counter (the private helper demo_bench_tick advances it).
+      example: bench_reset({}) -> "ok: bench reset"
+you: /tools persist demo autorun
+persist pack 'demo' to device storage and run it at every boot? [y/N]
+  confirm> y
+(pack 'demo' stored on the device, 1738 bytes, autorun on)
+you: /tools
+tools: 1 pack(s), 3 tool(s) (session-scoped: re-load after a reboot)
+  demo  (E:\agent\esp32_lua_llm\host_app\tool_packs\demo.lua)
+    mean(numbers: table) -> string
+      Arithmetic mean of a table of numbers.
+      example: mean({numbers=[3, 5, 10]}) -> "6.00"
+    temp_convert(value: number, unit: string (c|f)) -> string
+      Temperature conversion: unit 'c' returns Fahrenheit, 'f' returns Celsius.
+      example: temp_convert({value=100, unit="c"}) -> "212.0F"
+    bench_reset() -> ack  [mutating]
+      Reset the pack's demo counter (the private helper demo_bench_tick advances it).
+      example: bench_reset({}) -> "ok: bench reset"
+device packs (persisted): demo (autorun) [active]
+you: /quit
+(exit - cleaning up)
+  (script_stop: {"status":"error","cmd":"script_stop","code":-911,"msg":"invalid state: no script running"})
+  (scan_stop: {"status":"error","cmd":"scan_stop","msg":"not scanning"})
+  (conn_stop: {"status":"error","cmd":"conn_stop","code":-453})
+transcript saved: E:\agent\esp32_lua_llm\assistant_20260906_222133.log

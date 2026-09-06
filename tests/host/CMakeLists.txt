@@ -25,6 +25,7 @@ set(SRC_FILTER  ${PROJECT_ROOT}/firmware/components/filter/filter_engine.c)
 set(SRC_CLI     ${PROJECT_ROOT}/firmware/components/cli/cli_commands.c)
 set(SRC_BRIDGE  ${PROJECT_ROOT}/firmware/components/bridge/lua_llm_bridge.c)
 set(SRC_POOL    ${PROJECT_ROOT}/firmware/components/lua/lua_pool.c)
+set(SRC_PACK    ${PROJECT_ROOT}/firmware/components/pack_store/pack_store.c)
 set(SRC_STUBS   ${CMAKE_CURRENT_SOURCE_DIR}/test_stubs.c)
 set(SRC_UNITY   ${UNITY_DIR}/unity.c)
 
@@ -38,6 +39,7 @@ set(TEST_POOL   ${CMAKE_CURRENT_SOURCE_DIR}/test_lua_pool.c)
 set(TEST_CONN   ${CMAKE_CURRENT_SOURCE_DIR}/test_ble_conn.c)
 set(TEST_RESP   ${CMAKE_CURRENT_SOURCE_DIR}/test_cli_responses.c)
 set(TEST_FUZZ   ${CMAKE_CURRENT_SOURCE_DIR}/test_fuzz.c)
+set(TEST_PACK   ${CMAKE_CURRENT_SOURCE_DIR}/test_pack.c)
 
 add_executable(test_runner
     ${TEST_MAIN}
@@ -50,12 +52,14 @@ add_executable(test_runner
     ${TEST_CONN}
     ${TEST_RESP}
     ${TEST_FUZZ}
+    ${TEST_PACK}
     ${SRC_PROTO}
     ${SRC_JSON}
     ${SRC_FILTER}
     ${SRC_CLI}
     ${SRC_BRIDGE}
     ${SRC_POOL}
+    ${SRC_PACK}
     ${SRC_STUBS}
     ${SRC_UNITY}
 )

@@ -6,7 +6,7 @@ else()
 endif()
 
 idf_component_register(
-    SRCS "cli_commands.c"
+    SRCS "pack_store.c"
     INCLUDE_DIRS "." "${CMAKE_SOURCE_DIR}/interfaces"
-    REQUIRES proto json_enc filter storage ble bridge pack_store power ${_lua_dep}
+    REQUIRES storage bridge ${_lua_dep}
 )

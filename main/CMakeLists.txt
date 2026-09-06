@@ -8,5 +8,5 @@ endif()
 idf_component_register(
     SRCS "main.c"
     INCLUDE_DIRS "." "${CMAKE_SOURCE_DIR}/interfaces"
-    REQUIRES usb storage ble cli power ${_lua_dep}
+    REQUIRES usb storage ble cli pack_store power ${_lua_dep}
 )

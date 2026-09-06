@@ -105,6 +105,13 @@ void bridge_abort(void);
 /* True while a text-line upload is in progress. */
 bool bridge_is_uploading(void);
 
+/*
+ * Scan one Lua line for forbidden sandbox tokens (the AC #7 list).
+ * Returns the offending token, or NULL when clean. Public so pack_store
+ * (H6.1 M2) applies the identical fail-closed policy to tool packs.
+ */
+const char *bridge_scan_line(const char *line, size_t len);
+
 /* Current bridge state (RUNNING reflects the script subsystem). */
 bridge_state_t bridge_get_state(void);
 

@@ -11,6 +11,7 @@
 #include "lua_if.h"
 #include "cli_if.h"
 #include "bridge_if.h"
+#include "pack_if.h"
 #include "power_if.h"
 
 #if CONFIG_BLE_CONN_ENABLED
@@ -98,6 +99,20 @@ void app_main(void)
     ret = bridge_init();
     if (ret != 0) {
         printf("WARNING: Bridge init failed (%d)\n", ret);
+    }
+
+    /* H6.1 M2: tool packs — create /littlefs/packs and execute every
+     * pack carrying an autorun marker, so registered tools are alive
+     * before any host connects (decision 13's reserved seam, honored). */
+    ret = pack_store_init();
+    if (ret != 0) {
+        printf("WARNING: Pack store init failed (%d)\n", ret);
+    }
+    ret = pack_store_boot_autorun();
+    if (ret < 0) {
+        printf("WARNING: Pack autorun failed (%d)\n", ret);
+    } else if (ret > 0) {
+        printf("Pack autorun: %d pack(s) active\n", ret);
     }
 
     /* Initialize power management (automatic light sleep when idle) */

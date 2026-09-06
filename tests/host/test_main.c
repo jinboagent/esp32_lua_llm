@@ -14,6 +14,7 @@ extern int test_lua_pool_main(void);
 extern int test_ble_conn_main(void);
 extern int test_cli_responses_main(void);
 extern int test_fuzz_main(void);
+extern int test_pack_main(void);
 
 int main(void)
 {
@@ -27,5 +28,6 @@ int main(void)
     failures += test_ble_conn_main();
     failures += test_cli_responses_main();
     failures += test_fuzz_main();
+    failures += test_pack_main();
     return failures;
 }

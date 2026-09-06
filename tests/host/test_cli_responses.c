@@ -200,6 +200,27 @@ static void test_status_in_every_state(void)
     expect("SCAN STOP", 0, NULL);
 }
 
+static void test_pack_family_all_valid(void)
+{
+    expect("PACK", CLI_ERR_INVALID_CMD, NULL);
+    expect("PACK BOGUS", CLI_ERR_INVALID_CMD, NULL);
+    expect("PACK BEGIN demo", 0, "\"cmd\":\"pack_begin\"");
+    /* a data line acks silently, exactly like the F4.2 bridge */
+    char r2[256];
+    TEST_ASSERT_EQUAL_INT(0,
+        cli_process_command("function manifest() return M end",
+                            r2, sizeof(r2)));
+    TEST_ASSERT_EQUAL_STRING("", r2);
+    expect("PACK END", 0, "\"cmd\":\"pack_end\"");
+    expect("PACK LIST", 0, "\"cmd\":\"pack_list\"");
+    expect("PACK RUN demo", 0, "\"cmd\":\"pack_run\"");
+    expect("PACK RUN ghost", 0, "\"code\":-621");
+    expect("PACK AUTORUN demo ON", 0, "\"cmd\":\"pack_autorun\"");
+    expect("PACK AUTORUN demo MAYBE", CLI_ERR_INVALID_CMD, NULL);
+    expect("PACK DEL demo", 0, "\"cmd\":\"pack_del\"");
+    expect("PACK DEL demo", 0, "\"code\":-706");
+}
+
 /* ---- Entry point --------------------------------------------------------- */
 
 int test_cli_responses_main(void)
@@ -217,6 +238,7 @@ int test_cli_responses_main(void)
     fresh(); RUN_TEST(test_conn_error_paths_via_stubs);
     fresh(); RUN_TEST(test_script_running_blocks_conn_all_valid);
     fresh(); RUN_TEST(test_status_in_every_state);
+    fresh(); RUN_TEST(test_pack_family_all_valid);
 
     printf("  (response contract: %d responses strictly validated)\n",
            n_checked);

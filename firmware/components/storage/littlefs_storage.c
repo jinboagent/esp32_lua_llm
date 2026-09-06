@@ -1,6 +1,8 @@
 #include "storage_if.h"
 #include <string.h>
 #include <stdio.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "esp_littlefs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -170,5 +172,53 @@ int storage_get_free_space(uint32_t *free_bytes)
     }
 
     *free_bytes = (uint32_t)(total - used);
+    return 0;
+}
+
+int storage_list_dir(const char *path, storage_dirent_t *entries,
+                     uint8_t max_entries, uint8_t *count)
+{
+    if (s_check_path(path) != 0) return -702;
+    if (entries == NULL || count == NULL) return -702;
+    if (!s_mounted) return -701;
+
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return -700;
+    }
+
+    DIR *d = opendir(path);
+    if (d == NULL) {
+        xSemaphoreGive(s_mutex);
+        return -706;
+    }
+
+    uint8_t n = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL && n < max_entries) {
+        const char *nm = ent->d_name;
+        size_t name_len = strlen(nm);
+        if (strcmp(nm, ".") == 0 || strcmp(nm, "..") == 0)
+            continue;
+        if (name_len >= STORAGE_MAX_NAME_LEN)
+            continue;           /* oversize names are skipped, not fatal */
+
+        /* d_type is not portable across VFS impls; stat for the size */
+        char full[STORAGE_MAX_PATH_LEN];
+        if (snprintf(full, sizeof(full), "%s/%s", path, nm)
+                >= (int)sizeof(full))
+            continue;
+        struct stat st;
+        if (stat(full, &st) != 0)
+            continue;
+
+        memcpy(entries[n].name, nm, name_len);
+        entries[n].name[name_len] = '\0';
+        entries[n].size = (uint32_t)st.st_size;
+        n++;
+    }
+    closedir(d);
+    xSemaphoreGive(s_mutex);
+
+    *count = n;
     return 0;
 }

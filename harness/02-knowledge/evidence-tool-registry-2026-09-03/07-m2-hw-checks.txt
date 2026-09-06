@@ -1,0 +1,16 @@
+=== H6.1 M2 pack hardware checks on COM12 ===
+[PASS] Lua state reset (LUA DEINIT+INIT)
+[PASS] PACK upload (autorun) accepted
+[PASS] PACK LIST shows demo
+[PASS] autorun flag true
+[PASS] stored pack does not execute (manifest absent)
+[PASS] PACK RUN ok
+[PASS] manifest() served after PACK RUN
+[PASS] PACK RUN while scanning (outside state machine)
+  (boot banner lines seen after reopen: [])
+[PASS] manifest() alive after reboot with NO host load
+[PASS] forbidden pack line rejected (-612)
+[PASS] PACK DEL ok
+[PASS] LIST empty after DEL
+[PASS] manifest() gone after DEL+reboot
+=== 13 passed, 0 failed ===

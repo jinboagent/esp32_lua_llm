@@ -82,6 +82,13 @@ static const char *s_scan_line(const char *line, size_t len)
     return NULL;
 }
 
+/* Public re-export (H6.1 M2): pack_store reuses the exact token list so
+ * tool packs and filter scripts face one fail-closed policy. */
+const char *bridge_scan_line(const char *line, size_t len)
+{
+    return s_scan_line(line, len);
+}
+
 /* ---- Helpers ---- */
 
 static void s_reset(void)
