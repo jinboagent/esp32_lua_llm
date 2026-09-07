@@ -223,15 +223,24 @@ int pack_store_run(const char *name, char *result, uint16_t result_len,
     s_buf[len] = '\0';
     ret = lua_engine_exec((const char *)s_buf, result, result_len);
     if (ret != 0) {
-        snprintf(err, err_len, "exec failed (%d)", ret);
-        return -613;
+        /* B11: surface the real Lua message and the actual code — a
+         * -614 instruction-budget timeout must not read as a generic
+         * -613. Callers passing result==NULL (boot autorun) get the
+         * generic text. */
+        if (result != NULL && result[0] != '\0')
+            s_set_err(err, err_len, (const char *)result);
+        else
+            snprintf(err, err_len, "exec failed (%d)", ret);
+        return ret;
     }
     return 0;
 }
 
 int pack_store_list(char *json, uint16_t json_len)
 {
-    if (json == NULL || json_len == 0)
+    /* B13: header + tail alone need ~60 bytes; anything smaller would
+     * underflow the offset arithmetic below. */
+    if (json == NULL || json_len < 64)
         return -702;
     storage_dirent_t ents[PACK_LIST_DIRENTS];
     uint8_t count = 0;
@@ -246,7 +255,10 @@ int pack_store_list(char *json, uint16_t json_len)
     size_t off = (size_t)snprintf(json, json_len,
                                   "{\"status\":\"ok\",\"cmd\":\"pack_list\","
                                   "\"packs\":[");
+    if (off > json_len)
+        off = json_len;         /* B13: never let off escape the buffer */
     uint8_t shown = 0;
+    bool truncated = false;
     for (uint8_t i = 0; i < count; i++) {
         size_t nl = strlen(ents[i].name);
         if (nl <= 4 || strcmp(ents[i].name + nl - 4, PACK_EXT) != 0)
@@ -264,14 +276,17 @@ int pack_store_list(char *json, uint16_t json_len)
                          "%s{\"name\":\"%s\",\"size\":%lu,\"autorun\":%s}",
                          shown ? "," : "", name,
                          (unsigned long)ents[i].size, ar ? "true" : "false");
-        if (n < 0 || (size_t)n >= json_len - off)
+        if (n < 0 || (size_t)n >= json_len - off) {
+            truncated = true;    /* B14: say so instead of stopping silently */
             break;               /* out of response budget: stop cleanly */
+        }
         off += (size_t)n;
         shown++;
         if (shown >= PACK_MAX_FILES)
             break;
     }
-    snprintf(json + off, json_len - off, "],\"free\":%lu}",
+    snprintf(json + off, json_len - off, "],%s\"free\":%lu}",
+             truncated ? "\"truncated\":true," : "",
              (unsigned long)free_b);
     return 0;
 }

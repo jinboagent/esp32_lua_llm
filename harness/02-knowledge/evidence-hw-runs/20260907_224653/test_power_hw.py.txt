@@ -1,0 +1,16 @@
+  PASS  POWER STATUS sleep_enabled default
+  PASS  POWER STATUS state light_sleep when idle
+  PASS  POWER STATUS est_current_ma idle
+  PASS  POWER SLEEP OFF ok
+  PASS  state active when sleep off
+  PASS  est_current_ma active idle
+  PASS  POWER SLEEP ON ok
+  PASS  wake-on-command after idle
+  PASS  SCAN START with PM
+  PASS  advertisements still flow
+  PASS  POWER STATUS while scanning
+  PASS  SCAN STOP with PM
+  PASS  POWER bad arg rejected
+  PASS  POWER bare rejected
+
+14 passed, 0 failed

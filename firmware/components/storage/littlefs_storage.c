@@ -42,6 +42,7 @@ static int s_check_path(const char *path)
 {
     if (path == NULL) return -702;
     if (strlen(path) > STORAGE_MAX_PATH_LEN) return -703;
+    if (strstr(path, "..") != NULL) return -703;  /* P3: no traversal */
     return 0;
 }
 

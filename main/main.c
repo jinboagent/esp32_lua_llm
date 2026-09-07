@@ -151,6 +151,22 @@ void app_main(void)
         else if (line_len == -503) {
             /* Timeout - normal */
         }
+        else if (line_len == -504) {
+            /* P2 (audit B6 device side): the USB layer dropped an
+             * overlong line. Mid-upload that means silently-missing
+             * text — abort the session and tell the host in strict
+             * JSON instead of a plain-text line no tool parses. */
+            if (cli_abort_uploads()) {
+                snprintf(response, sizeof(response),
+                    "{\"status\":\"error\",\"cmd\":\"read\","
+                    "\"code\":-504,\"msg\":\"line too long "
+                    "(max %d bytes); upload aborted\"}",
+                    USB_RX_BUFFER_SIZE - 1);
+                usb_console_send_json(response);
+            } else {
+                printf("Read error: -504\n");
+            }
+        }
         else if (line_len < 0) {
             printf("Read error: %d\n", line_len);
         }

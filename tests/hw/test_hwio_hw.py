@@ -114,6 +114,14 @@ def main():
     check("USB pin 19 refused (fail-closed whitelist)",
           bool(r and r.get("status") == "error"
                and "not whitelisted" in r.get("msg", "")), json.dumps(r))
+    # audit B12: strapping pins (3, 45, 46) and UART0 (43/44) stay out of
+    # Lua's reach even though they sit inside the old numeric ranges.
+    for pin in (3, 43, 45, 46):
+        r = cmd(s, f"LUA EXEC return hw.gpio_read({pin})")
+        check(f"strap/UART pin {pin} refused (B12)",
+              bool(r and r.get("status") == "error"
+                   and "not whitelisted" in r.get("msg", "")),
+              json.dumps(r))
 
     # -- adc ---------------------------------------------------------------
     r = cmd(s, "LUA EXEC return hw.adc_read(4)")

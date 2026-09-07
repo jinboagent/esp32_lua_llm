@@ -1,0 +1,141 @@
+=== PuTTY-style session transcript (CR endings) ===
+> STATUS
+
+{"status":"ok","cmd":"status","state":"idle","reset_reason":11,"scanning":false,"queue_drops":0,"filter_count":0,"lua_ready":true,"script_loaded":false,"script_running":false,"free_storage":40960,"free_heap":94336,"lua_pool":{"used":12380,"peak":12380},"pipeline":{"received":0,"filtered":0,"output":0,"parse_err":0,"encode_err":0},"conn":{"enabled":true,"state":"off","active":false,"addr":"00:00:00:00:00:00","tx_lines":0,"dropped":0},"v":1}
+
+
+> VERSION
+
+{"status":"ok","cmd":"version","firmware":"1.0.0","build_date":"Sep  7 2026","chip":"esp32s3"}
+
+
+> SCAN START
+
+[0;32mI (2607) NimBLE: GAP procedure initiated: discovery; [0m
+
+[0;32mI (2607) NimBLE: own_addr_type=0 filter_policy=0 passive=1 limited=0 filter_duplicates=0 [0m
+
+[0;32mI (2608) NimBLE: duration=forever[0m
+
+[0;32mI (2608) NimBLE: 
+
+[0m
+
+BLE: passive scan started (interval=100ms, window=50ms)
+
+Pipeline: started
+
+{"status":"ok","cmd":"scan_start"}
+
+{"ts":2612,"addr":"AE:A4:F6:42:D0:C1","type":"random","rssi":-79,"name":"LHB-0B05EA98","uuids":[],"manu":{"id":"055D","data":"00020101000600"},"flags":"06"}
+
+{"ts":2634,"addr":"79:3D:C9:65:50:7B","type":"random","rssi":-68,"name":null,"uuids":["180A"],"manu":null,"flags":"1A"}
+
+{"ts":2635,"addr":"FB:BF:EC:95:0E:76","type":"random","rssi":-88,"name":null,"uuids":[],"manu":{"id":"004C","data":"16080030208AAC57937E"},"flags":"1A"}
+
+{"ts":2637,"addr":"71:B0:23:93:7A:0D","type":"random","rssi":-68,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092002B24B690CF18BB23258004FAF0AA30509259266B735EB75"}}
+
+{"ts":2646,"addr":"6A:7A:B9:12:38:F1","type":"random","rssi":-92,"name":null,"uuids":[],"manu":{"id":"004C","data":"12020001"}}
+
+{"ts":2714,"addr":"99:2C:27:6F:BC:78","type":"random","rssi":-96,"name":null,"uuids":[],"manu":{"id":"004C","data":"1005271CCFB5D9"},"tx_power":12,"flags":"1A"}
+
+{"ts":2751,"addr":"6F:45:98:D2:49:56","type":"random","rssi":-89,"name":null,"uuids":[],"manu":{"id":"004C","data":"1005261C8969F3"},"tx_power":12,"flags":"1A"}
+
+{"ts":2844,"addr":"EB:2F:BA:74:24:45","type":"random","rssi":-84,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":2925,"addr":"5C:7B:CA:CB:EE:65","type":"random","rssi":-87,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":2940,"addr":"84:B4:90:79:A5:6E","type":"random","rssi":-65,"name":null,"uuids":[],"manu":{"id":"004C","data":"10073F1F1EB76BE668"},"tx_power":12,"flags":"1A"}
+
+{"ts":2959,"addr":"F9:F0:EF:D7:C1:5C","type":"public","rssi":-87,"name":null,"uuids":[],"manu":{"id":"0075","data":"42040180665CC1D7EFF0F95EC1D7EFF0F801000000000000"}}
+
+{"ts":3222,"addr":"D7:F6:F7:01:CB:04","type":"public","rssi":-81,"name":null,"uuids":[],"manu":{"id":"0075","data":"420401806704CB01F7F6D706CB01F7F6D6078019554B1D10"},"flags":"18"}
+
+{"ts":3246,"addr":"2E:5F:35:05:71:45","type":"random","rssi":-89,"name":null,"uuids":["FE3C"],"manu":{"id":"000A","data":"474200352B0C495321BD2D30B1979710763CD10C"}}
+
+
+[scan stream: 27 adv lines in 2 s]
+sample: {"ts":6649,"addr":"6A:7A:B9:12:38:F1","type":"random","rssi":-97,"name":null,"uuids":[],"manu":{"id":"004C","data":"12020001"}}
+> STATUS
+
+{"status":"ok","cmd":"status","state":"scanning","reset_reason":11,"scanning":true,"queue_drops":0,"filter_count":0,"lua_ready":true,"script_loaded":false,"script_running":false,"free_storage":40960,"free_heap":92624,"lua_pool":{"used":12380,"peak":12380},"pipeline":{"received":71,"filtered":0,"output":71,"parse_err":0,"encode_err":0},"conn":{"enabled":true,"state":"off","active":false,"addr":"00:00:00:00:00:00","tx_lines":0,"dropped":0},"v":1}
+
+{"ts":9838,"addr":"84:B4:90:79:A5:6E","type":"random","rssi":-65,"name":null,"uuids":[],"manu":{"id":"004C","data":"10073F1F1EB76BE668"},"tx_power":12,"flags":"1A"}
+
+{"ts":9917,"addr":"71:B0:23:93:7A:0D","type":"random","rssi":-61,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092002B24B690CF18BB23258004FAF0AA30509259266B735EB75"}}
+
+{"ts":9939,"addr":"F9:F0:EF:D7:C1:5C","type":"public","rssi":-93,"name":null,"uuids":[],"manu":{"id":"0075","data":"42040180665CC1D7EFF0F95EC1D7EFF0F801000000000000"}}
+
+{"ts":10047,"addr":"79:3D:C9:65:50:7B","type":"random","rssi":-59,"name":null,"uuids":["180A"],"manu":null,"flags":"1A"}
+
+{"ts":10150,"addr":"AE:A4:F6:42:D0:C1","type":"random","rssi":-79,"name":"LHB-0B05EA98","uuids":[],"manu":{"id":"055D","data":"00020101000600"},"flags":"06"}
+
+{"ts":10208,"addr":"06:E4:67:67:60:F4","type":"random","rssi":-92,"name":null,"uuids":[],"manu":{"id":"004C","data":"0711069C5EC205E09C026ECC0733B751453E36"}}
+
+{"ts":10318,"addr":"D7:F6:F7:01:CB:04","type":"public","rssi":-78,"name":null,"uuids":[],"manu":{"id":"0075","data":"021844A1693BDE3AD0EB107D287C1935CA69BEC349F09EEC"},"flags":"18"}
+
+{"ts":10441,"addr":"FB:BF:EC:95:0E:76","type":"random","rssi":-89,"name":null,"uuids":[],"manu":{"id":"004C","data":"16080030208AAC57937E"},"flags":"1A"}
+
+{"ts":10512,"addr":"2E:5F:35:05:71:45","type":"random","rssi":-93,"name":null,"uuids":["FE3C"],"manu":{"id":"000A","data":"474200352B0C495321BD2D30B1979710763CD10C"}}
+
+
+{"ts":10613,"addr":"EB:2F:BA:74:24:45","type":"random","rssi":-84,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+> SCAN STOP
+
+Pipeline: stopped (received=81, filtered=0, output=81, parse_err=0, encode_err=0)
+
+Pipeline: stack high-water mark: 644 bytes free
+
+BLE: scan stopped
+
+{"status":"ok","cmd":"scan_stop"}
+
+
+> SCAN START
+
+[0;32mI (11627) NimBLE: GAP procedure initiated: discovery; [0m
+
+[0;32mI (11627) NimBLE: own_addr_type=0 filter_policy=0 passive=1 limited=0 filter_duplicates=0 [0m
+
+[0;32mI (11628) NimBLE: duration=forever[0m
+
+[0;32mI (11628) NimBLE: 
+
+[0m
+
+BLE: passive scan started (interval=100ms, window=50ms)
+
+Pipeline: started
+
+{"status":"ok","cmd":"scan_start"}
+
+{"ts":11639,"addr":"F9:F0:EF:D7:C1:5C","type":"public","rssi":-87,"name":null,"uuids":[],"manu":{"id":"0075","data":"42040180665CC1D7EFF0F95EC1D7EFF0F801000000000000"}}
+
+{"ts":11640,"addr":"6F:45:98:D2:49:56","type":"random","rssi":-96,"name":null,"uuids":[],"manu":{"id":"004C","data":"1005261C8969F3"},"tx_power":12,"flags":"1A"}
+
+{"ts":11643,"addr":"EB:2F:BA:74:24:45","type":"random","rssi":-92,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":11659,"addr":"5C:7B:CA:CB:EE:65","type":"random","rssi":-92,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":11741,"addr":"FB:BF:EC:95:0E:76","type":"random","rssi":-93,"name":null,"uuids":[],"manu":{"id":"004C","data":"16080030208AAC57937E"},"flags":"1A"}
+
+{"ts":11772,"addr":"AE:A4:F6:42:D0:C1","type":"random","rssi":-79,"name":"LHB-0B05EA98","uuids":[],"manu":{"id":"055D","data":"00020101000600"},"flags":"06"}
+
+{"ts":11777,"addr":"84:B4:90:79:A5:6E","type":"random","rssi":-67,"name":null,"uuids":[],"manu":{"id":"004C","data":"10073F1F1EB76BE668"},"tx_power":12,"flags":"1A"}
+
+{"ts":11860,"addr":"79:3D:C9:65:50:7B","type":"random","rssi":-60,"name":null,"uuids":["180A"],"manu":null,"flags":"1A"}
+
+{"ts":11862,"addr":"71:B0:23:93:7A:0D","type":"random","rssi":-61,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092002B24B690CF18BB23258004FAF0AA30509259266B735EB75"}}
+
+{"ts":12076,"addr":"5F:D1:AC:1E:86:EA","type":"random","rssi":-89,"name":null,"uuids":[],"manu":{"id":"004C","data":"12020000"}}
+
+
+[Ctrl+C] interrupt response: PASS
+[Ctrl+C] stream stopped: PASS (0 adv after)
+> STATUS
+
+{"status":"ok","cmd":"status","state":"idle","reset_reason":11,"scanning":false,"queue_drops":0,"filter_count":0,"lua_ready":true,"script_loaded":false,"script_running":false,"free_storage":40960,"free_heap":92624,"lua_pool":{"used":12380,"peak":12380},"pipeline":{"received":115,"filtered":0,"output":115,"parse_err":0,"encode_err":0},"conn":{"enabled":true,"state":"off","active":false,"addr":"00:00:00:00:00:00","tx_lines":0,"dropped":0},"v":1}
+
+
+=== end ===

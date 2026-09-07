@@ -280,6 +280,75 @@ static void test_syntax_errors_covered(void)
     TEST_ASSERT_EQUAL_INT(CLI_ERR_INVALID_CMD, run("PACK AUTORUN demo"));
 }
 
+/* B10: trailing whitespace on the terminator must FINISH the upload,
+ * not silently discard it as a stray command. */
+static void test_trailing_space_end_finishes_upload(void)
+{
+    fresh();
+    TEST_ASSERT_EQUAL_INT(0, run("PACK BEGIN demo"));
+    TEST_ASSERT_EQUAL_INT(0, run("DEMO_M = [[{}]]"));
+    TEST_ASSERT_EQUAL_INT(0, run("PACK END  "));
+    TEST_ASSERT_TRUE(strstr(resp, "\"cmd\":\"pack_end\"") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "\"status\":\"ok\"") != NULL);
+    TEST_ASSERT_NOT_NULL(stub_fs_get("/littlefs/packs/demo.lua", NULL));
+}
+
+/* B7: Ctrl+C must abort a pack upload like every other streaming mode. */
+static void test_interrupt_aborts_pack_upload(void)
+{
+    fresh();
+    TEST_ASSERT_EQUAL_INT(0, run("PACK BEGIN demo"));
+    TEST_ASSERT_EQUAL_INT(0, run("DEMO_M = [[{}]]"));
+    TEST_ASSERT_EQUAL_INT(0, run("\x03"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"cmd\":\"interrupt\"") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "\"status\":\"ok\"") != NULL);
+    TEST_ASSERT_EQUAL_INT(0, run("PACK END"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"code\":-611") != NULL);
+    TEST_ASSERT_NULL(stub_fs_get("/littlefs/packs/demo.lua", NULL));
+}
+
+/* B11: PACK RUN surfaces the real Lua error text (escaped — it carries
+ * quotes) and the actual code; -614 no longer reads as -613. */
+static void test_run_error_carries_lua_message_and_code(void)
+{
+    fresh();
+    upload("demo", false, "function manifest() return M end");
+    stub_lua_exec_ret = -614;
+    snprintf(stub_lua_exec_result, sizeof(stub_lua_exec_result),
+             "[string \"pack\"]: instruction budget exceeded");
+    TEST_ASSERT_EQUAL_INT(0, run("PACK RUN demo"));   /* validates JSON */
+    TEST_ASSERT_TRUE(strstr(resp, "\"code\":-614") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "instruction budget") != NULL);
+}
+
+/* B13: a buffer too small for header+tail is rejected, not underflowed. */
+static void test_list_rejects_tiny_buffer(void)
+{
+    fresh();
+    upload("demo", false, "DEMO_M = [[{}]]");
+    char tiny[8];
+    TEST_ASSERT_EQUAL_INT(-702, pack_store_list(tiny, sizeof(tiny)));
+    TEST_ASSERT_EQUAL_INT(-702, pack_store_list(NULL, 0));
+}
+
+/* B14: when the response budget runs out, LIST says so instead of
+ * silently dropping packs. 8 packs x 24-char names > 512 bytes. */
+static void test_list_marks_truncation(void)
+{
+    fresh();
+    for (int i = 0; i < 8; i++) {
+        char name[PACK_MAX_NAME + 1];
+        memset(name, 'a', PACK_MAX_NAME - 1);
+        name[PACK_MAX_NAME - 1] = (char)('1' + i);
+        name[PACK_MAX_NAME] = '\0';
+        upload(name, false, "v = 1");
+    }
+    char buf[512];
+    TEST_ASSERT_EQUAL_INT(0, pack_store_list(buf, sizeof(buf)));
+    TEST_ASSERT_TRUE(tvj_valid(buf));
+    TEST_ASSERT_TRUE(strstr(buf, "\"truncated\":true") != NULL);
+}
+
 /* ---- Entry point --------------------------------------------------------- */
 
 int test_pack_main(void)
@@ -302,6 +371,11 @@ int test_pack_main(void)
     fresh(); RUN_TEST(test_boot_autorun_runs_marked_pack_past_dirent_cap);
     fresh(); RUN_TEST(test_upload_rejected_when_store_full);
     fresh(); RUN_TEST(test_syntax_errors_covered);
+    fresh(); RUN_TEST(test_trailing_space_end_finishes_upload);
+    fresh(); RUN_TEST(test_interrupt_aborts_pack_upload);
+    fresh(); RUN_TEST(test_run_error_carries_lua_message_and_code);
+    fresh(); RUN_TEST(test_list_rejects_tiny_buffer);
+    fresh(); RUN_TEST(test_list_marks_truncation);
 
     printf("  (pack contract: %d responses strictly validated)\n",
            n_checked);

@@ -71,6 +71,14 @@ int cli_init(void);
 int cli_process_command(const char *cmd, char *response, uint16_t response_len);
 
 /*
+ * Abort every text-line upload session (SCRIPT bridge, PACK, LUA chunk).
+ * @return true when a session was active and got aborted.
+ * Used by Ctrl+C (h_interrupt) and by main.c when the USB layer drops
+ * an overlong line mid-upload (-504) so the host learns in strict JSON.
+ */
+bool cli_abort_uploads(void);
+
+/*
  * Current CLI state, derived from the live subsystem state
  * (script running > scanning > idle) so it can never drift.
  */

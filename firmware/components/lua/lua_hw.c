@@ -39,9 +39,16 @@
 #define HW_KV_MAX_VAL  96
 
 /* ESP32-S3 pin whitelist: 19/20 are USB D+/D-, 26-32 are flash, 33-37
- * are octal PSRAM on R8 modules — none may be touched from Lua. */
+ * are octal PSRAM on R8 modules — none may be touched from Lua.
+ * Also excluded (audit B12): 3 and 46 are JTAG-source/boot-msg
+ * strapping pins, 45 is the VDD_SPI voltage strap, 43/44 are UART0
+ * TX/RX (the ROM loader's emergency console) — persistent autorun
+ * packs must not be able to rewire the boot/panic paths. */
 static bool s_pin_ok(int pin)
 {
+    if (pin == 3 || pin == 45 || pin == 46 ||
+        pin == 43 || pin == 44)
+        return false;
     return (pin >= 1 && pin <= 18) || (pin >= 21 && pin <= 25) ||
            (pin >= 38 && pin <= 48);
 }

@@ -139,6 +139,49 @@ static void test_single_line_exec_still_works_alongside(void)
     TEST_ASSERT_TRUE(strstr(resp, "\"cmd\":\"lua_exec\"") != NULL);
 }
 
+/* P1 (pre-existing gap): one-line execs must pass the same fail-closed
+ * scan the upload paths apply — the device cannot rely on hosts
+ * pre-scanning. */
+static void test_exec_one_line_is_scanned(void)
+{
+    fresh();
+    TEST_ASSERT_EQUAL_INT(0, run("LUA EXEC t = os.clock()"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"code\":-612") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "sandbox violation") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "'os.'") != NULL);
+    /* a clean one-liner still executes */
+    TEST_ASSERT_EQUAL_INT(0, run("LUA EXEC return 1"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"status\":\"ok\"") != NULL);
+}
+
+/* B10: trailing whitespace on the terminator must FINISH the upload,
+ * not silently discard it as a stray command. */
+static void test_trailing_space_end_finishes_chunk(void)
+{
+    fresh();
+    snprintf(stub_lua_exec_result, sizeof(stub_lua_exec_result), "ok");
+    TEST_ASSERT_EQUAL_INT(0, run("LUA BEGIN"));
+    TEST_ASSERT_EQUAL_INT(0, run("x = 1"));
+    TEST_ASSERT_EQUAL_INT(0, run("LUA END  \t"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"cmd\":\"lua_end\"") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "\"status\":\"ok\"") != NULL);
+    TEST_ASSERT_EQUAL_STRING("x = 1\n", stub_lua_exec_last);
+}
+
+/* B7: Ctrl+C must abort a chunk upload like every other streaming
+ * mode — the banner promises one-key recovery. */
+static void test_interrupt_aborts_chunk(void)
+{
+    fresh();
+    TEST_ASSERT_EQUAL_INT(0, run("LUA BEGIN"));
+    TEST_ASSERT_EQUAL_INT(0, run("x = 1"));
+    TEST_ASSERT_EQUAL_INT(0, run("\x03"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"cmd\":\"interrupt\"") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "\"status\":\"ok\"") != NULL);
+    TEST_ASSERT_EQUAL_INT(0, run("LUA END"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"code\":-911") != NULL);
+}
+
 /* ---- Entry point --------------------------------------------------------- */
 
 int test_lua_chunk_main(void)
@@ -154,6 +197,9 @@ int test_lua_chunk_main(void)
     fresh(); RUN_TEST(test_end_without_begin_is_state_error);
     fresh(); RUN_TEST(test_begin_mid_session_restarts);
     fresh(); RUN_TEST(test_single_line_exec_still_works_alongside);
+    fresh(); RUN_TEST(test_exec_one_line_is_scanned);
+    fresh(); RUN_TEST(test_trailing_space_end_finishes_chunk);
+    fresh(); RUN_TEST(test_interrupt_aborts_chunk);
 
     printf("  (lua chunk contract: %d responses strictly validated)\n",
            n_checked);

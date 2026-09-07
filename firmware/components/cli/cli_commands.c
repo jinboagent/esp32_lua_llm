@@ -458,6 +458,22 @@ static int h_lua(const char *action, char *response, uint16_t response_len)
 {
     if (strncmp(action, "EXEC ", 5) == 0) {
         const char *script = action + 5;
+        /* P1 (pre-existing gap): one-line execs bypassed the per-line
+         * fail-closed scan every upload path applies. Host tools
+         * pre-scan, but the device must hold the line for direct
+         * terminal users too. */
+        {
+            uint32_t slen = (uint32_t)strlen(script);
+            const char *tok = slen > 0 ? bridge_scan_line(script, slen)
+                                       : NULL;
+            if (tok != NULL) {
+                CLI_EMIT(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"lua_exec\","
+                    "\"code\":-612,\"msg\":\"sandbox violation: "
+                    "'%s' is not allowed\"}", tok);
+                return 0;
+            }
+        }
         if (!lua_engine_is_ready()) {
             CLI_EMIT(response, response_len,
                 "{\"status\":\"error\",\"cmd\":\"lua_exec\","
@@ -835,9 +851,12 @@ static int h_pack(const char *action, char *response, uint16_t response_len)
                 "{\"status\":\"ok\",\"cmd\":\"pack_run\","
                 "\"result\":\"%s\"}", esc);
         } else {
+            /* B11: err may carry the raw Lua error text (quotes!) */
+            char err_esc[sizeof(err) * 2];
+            json_escape_str(err, err_esc, sizeof(err_esc));
             CLI_EMIT(response, response_len,
                 "{\"status\":\"error\",\"cmd\":\"pack_run\","
-                "\"code\":%d,\"msg\":\"%s\"}", ret, err);
+                "\"code\":%d,\"msg\":\"%s\"}", ret, err_esc);
         }
         return 0;
     }
@@ -1133,14 +1152,33 @@ static bool s_is_cli_command(const char *cmd)
 
 /* ---- Interrupt (Ctrl+C) ------------------------------------------------ */
 
+/* Abort every text-line upload session (F4.2 script bridge, H6.1 pack,
+ * H6.1 LUA chunk). Returns true when one was active. main.c also calls
+ * this when the USB layer dropped an overlong line mid-upload (P2). */
+bool cli_abort_uploads(void)
+{
+    bool any = false;
+    if (bridge_is_uploading()) {
+        bridge_abort();
+        any = true;
+    }
+    if (pack_store_is_uploading()) {
+        pack_store_abort();
+        any = true;
+    }
+    if (s_chunk_active) {
+        s_lua_chunk_abort();
+        any = true;
+    }
+    return any;
+}
+
 /* Ctrl+C from the terminal: stop whatever is streaming (upload, script,
  * scan) so a flooded terminal can always be recovered with one key. */
 static int h_interrupt(char *response, uint16_t response_len)
 {
     int fails = 0;
-    if (bridge_is_uploading()) {
-        bridge_abort();
-    }
+    (void)cli_abort_uploads();  /* B7: pack + LUA chunk sessions too */
     if (script_is_running()) {
         script_stop();
     }
@@ -1179,96 +1217,113 @@ int cli_process_command(const char *cmd, char *response, uint16_t response_len)
 
     response[0] = '\0';
 
+    /* B10: tolerate trailing whitespace — "PACK END " / "LUA END\t"
+     * must finish their upload, not silently discard it as a stray
+     * command. Trailing blanks are irrelevant to Lua data lines. */
+    char norm[256];
+    const char *line = cmd;
+    size_t clen = strlen(cmd);
+    if (clen > 0 && clen < sizeof(norm)) {
+        while (clen > 0 && (cmd[clen - 1] == ' ' || cmd[clen - 1] == '\t' ||
+                            cmd[clen - 1] == '\r' || cmd[clen - 1] == '\n' ||
+                            cmd[clen - 1] == '\v' || cmd[clen - 1] == '\f'))
+            clen--;
+        memcpy(norm, cmd, clen);
+        norm[clen] = '\0';
+        line = norm;
+    }
+
     /* Ctrl+C (0x03) — immediate interrupt, takes priority over upload
      * mode so a stuck SCRIPT LOAD can always be cancelled. */
-    if (cmd[0] == '\x03' && cmd[1] == '\0')
+    if (line[0] == '\x03' && line[1] == '\0')
         return h_interrupt(response, response_len);
 
     /* F4.2 upload mode: every line is script text except SCRIPT END.
      * Any other recognized CLI command aborts the upload and then
      * proceeds normally (AC #4). */
     if (bridge_is_uploading()) {
-        if (strcmp(cmd, "SCRIPT END") == 0)
+        if (strcmp(line, "SCRIPT END") == 0)
             return h_script("END", response, response_len);
-        if (s_is_cli_command(cmd))
+        if (s_is_cli_command(line))
             bridge_abort();
         else
             return bridge_handle_script_upload(
-                cmd, (uint32_t)strlen(cmd), response, response_len);
+                line, (uint32_t)strlen(line), response, response_len);
     }
 
     /* H6.1 M2 pack upload: same shape as the F4.2 bridge above. Any
      * recognized CLI command mid-upload aborts the pack session. */
     if (pack_store_is_uploading()) {
-        if (strcmp(cmd, "PACK END") == 0)
+        if (strcmp(line, "PACK END") == 0)
             return h_pack("END", response, response_len);
-        if (s_is_cli_command(cmd))
+        if (s_is_cli_command(line))
             pack_store_abort();
         else
-            return h_pack_data_line(cmd, response, response_len);
+            return h_pack_data_line(line, response, response_len);
     }
 
     /* H6.1 M3 chunk upload: same shape again; LUA END executes it. */
     if (s_chunk_active) {
-        if (strcmp(cmd, "LUA END") == 0)
+        if (strcmp(line, "LUA END") == 0)
             return h_lua("END", response, response_len);
-        if (s_is_cli_command(cmd))
+        if (s_is_cli_command(line))
             s_lua_chunk_abort();
         else
-            return s_lua_chunk_line(cmd, response, response_len);
+            return s_lua_chunk_line(line, response, response_len);
     }
 
-    if (strcmp(cmd, "STATUS") == 0)
+    if (strcmp(line, "STATUS") == 0)
         return h_status(response, response_len);
 
-    if (strcmp(cmd, "VERSION") == 0)
+    if (strcmp(line, "VERSION") == 0)
         return h_version(response, response_len);
 
-    if (strcmp(cmd, "SCAN") == 0)
+    if (strcmp(line, "SCAN") == 0)
         return s_syntax_error(response, response_len,
                               "SCAN START|STOP|INTERVAL <ms>");
-    if (strncmp(cmd, "SCAN ", 5) == 0)
-        return h_scan(cmd + 5, response, response_len);
+    if (strncmp(line, "SCAN ", 5) == 0)
+        return h_scan(line + 5, response, response_len);
 
-    if (strcmp(cmd, "FILTER") == 0)
+    if (strcmp(line, "FILTER") == 0)
         return s_syntax_error(response, response_len,
                               "FILTER ADD|CLEAR|LIST");
-    if (strncmp(cmd, "FILTER ", 7) == 0)
-        return h_filter(cmd + 7, response, response_len);
+    if (strncmp(line, "FILTER ", 7) == 0)
+        return h_filter(line + 7, response, response_len);
 
-    if (strcmp(cmd, "LUA") == 0)
-        return s_syntax_error(response, response_len, "LUA EXEC|INIT|DEINIT");
-    if (strncmp(cmd, "LUA ", 4) == 0)
-        return h_lua(cmd + 4, response, response_len);
+    if (strcmp(line, "LUA") == 0)
+        return s_syntax_error(response, response_len,
+                              "LUA EXEC|INIT|DEINIT|BEGIN|END");
+    if (strncmp(line, "LUA ", 4) == 0)
+        return h_lua(line + 4, response, response_len);
 
-    if (strcmp(cmd, "SCRIPT") == 0)
+    if (strcmp(line, "SCRIPT") == 0)
         return s_syntax_error(response, response_len,
                               "SCRIPT LOAD|BEGIN|CHUNK|END|RUN|STOP|STATUS");
-    if (strncmp(cmd, "SCRIPT ", 7) == 0)
-        return h_script(cmd + 7, response, response_len);
+    if (strncmp(line, "SCRIPT ", 7) == 0)
+        return h_script(line + 7, response, response_len);
 
-    if (strcmp(cmd, "PACK") == 0)
+    if (strcmp(line, "PACK") == 0)
         return s_syntax_error(response, response_len,
             "PACK LIST|BEGIN <name> [autorun]|END|RUN <name>|DEL <name>|"
             "AUTORUN <name> ON|OFF");
-    if (strncmp(cmd, "PACK ", 5) == 0)
-        return h_pack(cmd + 5, response, response_len);
+    if (strncmp(line, "PACK ", 5) == 0)
+        return h_pack(line + 5, response, response_len);
 
-    if (strcmp(cmd, "POWER") == 0)
+    if (strcmp(line, "POWER") == 0)
         return s_syntax_error(response, response_len,
                               "POWER SLEEP ON|OFF|STATUS");
-    if (strncmp(cmd, "POWER ", 6) == 0)
-        return h_power(cmd + 6, response, response_len);
+    if (strncmp(line, "POWER ", 6) == 0)
+        return h_power(line + 6, response, response_len);
 
-    if (strcmp(cmd, "CONN") == 0)
+    if (strcmp(line, "CONN") == 0)
         return s_syntax_error(response, response_len,
 #ifdef CONN_CMD_SUPPORTED
                               "CONN TARGET|START|STOP|STATUS|INTERVAL <ms>");
 #else
                               "CONN (not compiled in)");
 #endif
-    if (strncmp(cmd, "CONN ", 5) == 0)
-        return h_conn(cmd + 5, response, response_len);
+    if (strncmp(line, "CONN ", 5) == 0)
+        return h_conn(line + 5, response, response_len);
 
     CLI_EMIT(response, response_len,
         "{\"status\":\"error\",\"msg\":\"unknown command\"}");
