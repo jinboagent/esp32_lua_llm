@@ -965,6 +965,106 @@ def lua_exec_chunk(s, lines, buf=None):
     return True, r.get("result", "")
 
 
+# ---- H6.1 M4: native function-calling (--native-tools) ----------------------
+
+ARG_TYPE_MAP = {"string": "string", "number": "number",
+                "boolean": "boolean", "table": "object"}
+
+
+def tools_array(registry):
+    """The registry as an OpenAI-compatible tools array. The manifest's
+    arg types map 1:1; enum constraints carry over; every tool is
+    described by its doc (+ mutating mark)."""
+    out = []
+    for p in registry.packs:
+        for t in p["tools"]:
+            props = {}
+            req = []
+            for a in t.get("args", []):
+                props[a["name"]] = {
+                    "type": ARG_TYPE_MAP.get(a["type"], "string")}
+                if "enum" in a:
+                    props[a["name"]]["enum"] = a["enum"]
+                if "default" not in a:
+                    req.append(a["name"])
+            schema = {"type": "object", "properties": props}
+            if req:
+                schema["required"] = req
+            out.append({"type": "function", "function": {
+                "name": t["name"],
+                "description": t["doc"]
+                + (" [mutating]" if t.get("mutating") else ""),
+                "parameters": schema}})
+    return out
+
+
+def lua_args_literal(args):
+    """A JSON args object -> ONE Lua table literal with named fields
+    (the pack convention: every tool takes one table). JSON string
+    escaping is valid Lua; numbers/booleans pass through; lists become
+    array tables."""
+    def scalar(v):
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, float):
+            return repr(v)
+        if isinstance(v, str):
+            return json.dumps(v)
+        if isinstance(v, list):
+            return "{" + ",".join(scalar(x) for x in v) + "}"
+        raise ValueError(f"unsupported arg value {v!r}")
+
+    parts = [f"{k}={scalar(v)}" for k, v in args.items()]
+    return "{" + ",".join(parts) + "}"
+
+
+def _chat_request(cfg, body):
+    """One raw chat-completions HTTP exchange. Returns the parsed
+    response JSON; raises RuntimeError on HTTP/transport errors."""
+    if cfg.get("no_thinking"):
+        body = dict(body)
+        body["enable_thinking"] = False
+    body = json.dumps(body).encode()
+    req = urllib.request.Request(
+        cfg["base"] + "/chat/completions", data=body,
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer " + cfg["key"]})
+    try:
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S) as resp:
+            out = json.load(resp)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"LLM HTTP {e.code}: "
+                           f"{e.read()[:300].decode(errors='replace')}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"LLM unreachable: {e.reason}")
+    except TimeoutError:
+        raise RuntimeError("LLM timeout: no response within the limit")
+    return out
+
+
+def chat_native(cfg, messages, tools, note=None):
+    """Native function-calling round trip (M4): sends the tools array
+    and returns the assistant MESSAGE OBJECT (content and/or
+    tool_calls). Same /api/v1 self-heal as llm_chat. Endpoints without
+    tools support answer HTTP 4xx — surfaced verbatim so the user can
+    fall back to the default generate-and-execute mode."""
+    body = {"model": cfg["model"], "temperature": 0.2,
+            "messages": messages, "tools": tools, "tool_choice": "auto"}
+    try:
+        return _chat_request(cfg, body)
+    except RuntimeError as e:
+        if "HTTP 404" not in str(e) or "/api/v1" not in cfg["base"]:
+            raise
+        healed = cfg["base"].rsplit("/api/v1", 1)[0] + "/compatible-mode/v1"
+        if note is not None:
+            note(f"(base {cfg['base']} answered 404 (native dialect root) "
+                 f"- retrying on {healed})")
+        cfg["base"] = healed
+        return _chat_request(cfg, body)
+
+
 def stop_all(s, tee, buf):
     """Orderly cleanup on every exit path (N3: port closes after this).
     Errors here are expected when a plane is already idle; they are
@@ -1004,11 +1104,18 @@ is buffered and echoed when the turn finishes."""
 
 
 class Session:
+    # class-level defaults so bare Session.__new__ constructions (the
+    # unit-test pattern) behave like the feature-off session
+    native_tools = False
+    mutating_gate = False
+
     def __init__(self, port, no_llm=False, system_file=None,
-                 system_extra=None, mutating_gate=False):
+                 system_extra=None, mutating_gate=False,
+                 native_tools=False):
         self.port = port
         self.no_llm = no_llm
         self.mutating_gate = mutating_gate
+        self.native_tools = native_tools
         self.tee = Tee(time.strftime("assistant_%Y%m%d_%H%M%S.log"))
         self.reader = ConsoleReader(self.tee)
         self.buf = DeviceBuffer()
@@ -1100,6 +1207,103 @@ class Session:
         self.cfg_from_env = False
         return True
 
+    def ask_llm_native(self, user_text, snapshot):
+        """M4 option (--native-tools): the registry is sent as a tools
+        array; tool_calls execute through the SAME device path as
+        generate-and-execute (single-line program per call), results
+        return as role:"tool" messages, the final content is the
+        answer. Mutating gate and the execution cap apply unchanged."""
+        prompt = (self.system_prompt + self.tools.prompt()
+                  + "\n\nNATIVE TOOL CALLING is enabled: call the "
+                    "registered tools through the tools interface; when "
+                    "done, reply with plain text content (no JSON "
+                    "envelope).")
+        messages = build_messages(self.history.view(), snapshot, user_text,
+                                  prompt)
+        arr = tools_array(self.tools)
+        self.tee.say(f"(asking {self.cfg['model']} with {len(arr)} native "
+                     f"tools - {self.buf.counts()})")
+        self.history.add("user", "Device data snapshot attached. " + user_text)
+        executed = 0
+        capped = False
+        while True:
+            try:
+                msg = chat_native(self.cfg, messages, arr,
+                                  self.tee.say)["choices"][0]["message"]
+            except RuntimeError as e:
+                if not self._try_401_fallback(e):
+                    raise
+                msg = chat_native(self.cfg, messages, arr,
+                                  self.tee.say)["choices"][0]["message"]
+            calls = msg.get("tool_calls") or []
+            if not calls:
+                text = (msg.get("content") or "").strip() or "(empty reply)"
+                self.tee.say("llm: " + text)
+                self.history.add("assistant", text[:400])
+                return
+            if executed >= TOOL_EXEC_CAP or capped:
+                capped = True
+                if executed >= TOOL_EXEC_CAP:
+                    self.tee.say(f"(native tool cap reached "
+                                 f"({TOOL_EXEC_CAP}/turn))")
+                messages.append({"role": "assistant",
+                                 "content": msg.get("content") or "",
+                                 "tool_calls": calls})
+                for c in calls:
+                    messages.append({"role": "tool",
+                                     "tool_call_id": c["id"],
+                                     "content": "skipped: the execution "
+                                                "budget for this turn is "
+                                                "exhausted; answer now."})
+                continue
+            messages.append({"role": "assistant",
+                             "content": msg.get("content") or "",
+                             "tool_calls": calls})
+            for c in calls:
+                fname = c.get("function", {}).get("name", "?")
+                try:
+                    args = json.loads(
+                        c["function"].get("arguments") or "{}")
+                except (json.JSONDecodeError, ValueError):
+                    args = None
+                if not isinstance(args, dict):
+                    messages.append({"role": "tool",
+                                     "tool_call_id": c["id"],
+                                     "content": "bad arguments JSON"})
+                    continue
+                try:
+                    literal = lua_args_literal(args)
+                except ValueError as e:
+                    messages.append({"role": "tool",
+                                     "tool_call_id": c["id"],
+                                     "content": f"bad args: {e}"})
+                    continue
+                code = f"return {fname}({literal})"
+                if self.mutating_gate and self.mutating_names_in(code):
+                    self.tee.say("native call to mutating tool: " + fname)
+                    self.tee.say("execute? [y/N]")
+                    line = self.wait_for_line()
+                    if line is None or line.strip().lower() not in ("y",
+                                                                    "yes"):
+                        self.tee.say("(declined - nothing was executed)")
+                        messages.append({"role": "tool",
+                                         "tool_call_id": c["id"],
+                                         "content": "declined by the user"})
+                        continue
+                    self.tee.say(f"  confirm> {line}")
+                executed += 1
+                ok, result = self.exec_tool_program(code)
+                if ok:
+                    self.tee.say(f"tool> {fname}: {result}")
+                else:
+                    self.tee.say(f"(tool {fname} failed: {result})")
+                    result = "error: " + result
+                self.history.add("user",
+                                 f"TOOL {fname}: {str(result)[:150]}")
+                messages.append({"role": "tool",
+                                 "tool_call_id": c["id"],
+                                 "content": str(result)})
+
     def chat_envelope(self, messages):
         """One LLM round trip with the Rec1 ladder (401 self-heal, then
         ONE escaping-focused retry, fenced-lua extraction as the last
@@ -1127,6 +1331,8 @@ class Session:
 
     def ask_llm(self, user_text):
         snapshot = self.buf.snapshot()
+        if self.native_tools and not self.tools.is_empty():
+            return self.ask_llm_native(user_text, snapshot)
         messages = build_messages(self.history.view(), snapshot, user_text,
                                   self.system_prompt + self.tools.prompt())
         self.tee.say(f"(asking {self.cfg['model']} - {self.buf.counts()})")
@@ -1792,9 +1998,15 @@ def main():
                         "executing a tool program that calls a "
                         "manifest-declared mutating tool (static "
                         "detection from the registry)")
+    p.add_argument("--native-tools", action="store_true",
+                   help="H6.1 M4 option: send the tool registry as a "
+                        "native tools array (OpenAI function calling) "
+                        "instead of teaching composition in the prompt; "
+                        "tool calls execute through the same device path")
     args = p.parse_args()
     sys.exit(Session(args.port, args.no_llm, args.system_file,
-                     args.system_extra, args.mutating_gate).run())
+                     args.system_extra, args.mutating_gate,
+                     args.native_tools).run())
 
 
 if __name__ == "__main__":

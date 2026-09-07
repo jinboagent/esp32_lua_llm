@@ -1790,5 +1790,137 @@ class HwioPackTests(unittest.TestCase):
         self.assertEqual(mut, ["pin_write", "cfg_set"])
 
 
+# ---- H6.1 M4: native function-calling ----------------------------------------
+
+class NativeToolsTests(unittest.TestCase):
+    """--native-tools: registry -> tools array, JSON args -> the pack
+    table-literal convention, tool_calls -> the same device exec path,
+    results back as role:"tool" messages."""
+
+    def setUp(self):
+        self.sess = assistant.Session.__new__(assistant.Session)
+        self.sess.tee = unittest.mock.Mock()
+        self.sess.buf = assistant.DeviceBuffer()
+        self.sess.history = assistant.History()
+        self.sess.cfg = {"base": "https://x/v1", "key": "k", "model": "m"}
+        self.sess.system_prompt = assistant.SYSTEM_PROMPT
+        self.sess.mutating_gate = False
+        self.sess.native_tools = True
+        self.sess.s = None
+        m, _ = assistant.validate_manifest(DEMO_MANIFEST)
+        self.sess.tools = assistant.ToolRegistry()
+        self.sess.tools.add(m, "demo.lua")
+
+    def said(self):
+        return " ".join(str(c.args[0])
+                        for c in self.sess.tee.say.call_args_list
+                        if c.args)
+
+    @staticmethod
+    def msg(tool_calls=None, content=None):
+        return {"choices": [{"message": {
+            "content": content,
+            "tool_calls": tool_calls or [],
+        }}]}
+
+    @staticmethod
+    def call(cid, name, args_json):
+        return {"id": cid, "type": "function",
+                "function": {"name": name, "arguments": args_json}}
+
+    def test_tools_array_shape(self):
+        arr = assistant.tools_array(self.sess.tools)
+        self.assertEqual([t["function"]["name"] for t in arr],
+                         ["mean", "temp_convert", "bench_reset"])
+        mean = arr[0]["function"]
+        self.assertEqual(mean["parameters"]["properties"]["numbers"],
+                         {"type": "object"})
+        self.assertEqual(mean["parameters"]["required"], ["numbers"])
+        tc = arr[1]["function"]
+        self.assertEqual(tc["parameters"]["properties"]["unit"]["enum"],
+                         ["c", "f"])
+        self.assertIn("[mutating]", arr[2]["function"]["description"])
+
+    def test_lua_args_literal(self):
+        self.assertEqual(
+            assistant.lua_args_literal({"numbers": [3, 5, 10]}),
+            "{numbers={3,5,10}}")
+        self.assertEqual(
+            assistant.lua_args_literal({"value": 100, "unit": "c"}),
+            '{value=100,unit="c"}')
+        self.assertEqual(assistant.lua_args_literal({}), "{}")
+        with self.assertRaises(ValueError):
+            assistant.lua_args_literal({"x": {"nested": 1}})
+
+    def test_tool_calls_round_trip(self):
+        sim = ExecToolProgramTests.ListSerial(
+            [ExecToolProgramTests.lua_ok("6.00")])
+        self.sess.s = sim
+        replies = [
+            self.msg([self.call("c1", "mean",
+                                '{"numbers": [3, 5, 10]}')]),
+            self.msg(content="the mean is 6.00"),
+        ]
+        it = iter(replies)
+        with unittest.mock.patch.object(
+                assistant, "chat_native",
+                side_effect=lambda *a, **k: next(it)) as chat:
+            self.sess.ask_llm("mean of 3,5,10?")
+        self.assertEqual(chat.call_count, 2)
+        sent = [w.decode().strip() for w in sim.written]
+        self.assertIn("LUA EXEC return mean({numbers={3,5,10}})", sent)
+        said = self.said()
+        self.assertIn("tool> mean: 6.00", said)
+        self.assertIn("llm: the mean is 6.00", said)
+        # the tool result went back as a role:"tool" message
+        second_messages = chat.call_args_list[1].args[1]
+        tool_msgs = [m for m in second_messages if m.get("role") == "tool"]
+        self.assertEqual(tool_msgs[0]["tool_call_id"], "c1")
+        self.assertEqual(tool_msgs[0]["content"], "6.00")
+
+    def test_bad_args_json_fed_back(self):
+        sim = ExecToolProgramTests.ListSerial([])
+        self.sess.s = sim
+        replies = [
+            self.msg([self.call("c1", "mean", "not json")]),
+            self.msg(content="recovered"),
+        ]
+        it = iter(replies)
+        with unittest.mock.patch.object(
+                assistant, "chat_native",
+                side_effect=lambda *a, **k: next(it)) as chat:
+            self.sess.ask_llm("mean?")
+        second_messages = chat.call_args_list[1].args[1]
+        tool_msgs = [m for m in second_messages if m.get("role") == "tool"]
+        self.assertEqual(tool_msgs[0]["content"], "bad arguments JSON")
+        self.assertFalse(sim.written)     # nothing executed
+
+    def test_native_cap_skips_and_forces_final(self):
+        sim = ExecToolProgramTests.ListSerial(
+            [ExecToolProgramTests.lua_ok("1"),
+             ExecToolProgramTests.lua_ok("1"),
+             ExecToolProgramTests.lua_ok("1")])
+        self.sess.s = sim
+        prog = self.msg([self.call("c1", "mean", '{"numbers": [1]}')])
+        replies = [prog, prog, prog, prog,
+                   self.msg(content="done under duress")]
+        it = iter(replies)
+        with unittest.mock.patch.object(
+                assistant, "chat_native",
+                side_effect=lambda *a, **k: next(it)) as chat:
+            self.sess.ask_llm("keep averaging")
+        # 3 rounds execute; the 4th trips the cap and gets synthetic
+        # skipped results; the 5th round is the forced plain answer
+        self.assertEqual(chat.call_count, 5)
+        said = self.said()
+        self.assertIn("native tool cap reached (3/turn)", said)
+        self.assertIn("llm: done under duress", said)
+        last_messages = chat.call_args_list[4].args[1]
+        tool_msgs = [m for m in last_messages if m.get("role") == "tool"]
+        # 3 executed results + the synthetic skipped one from the cap
+        self.assertEqual(len(tool_msgs), 4)
+        self.assertIn("skipped", tool_msgs[-1]["content"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
