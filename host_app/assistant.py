@@ -77,6 +77,7 @@ Usage:
 """
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -103,7 +104,7 @@ LLM_TIMEOUT_S = 180
 TOOL_PACKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "tool_packs")
 LUA_EXEC_LINE_MAX = 240   # code budget/line: 256 B USB RX - "LUA EXEC " - \n
-MANIFEST_CHUNK = 180      # string.sub slice/fetch: 256 B result, 512 B TX
+MANIFEST_CHUNK = 90       # bytes per fetch, HEX-encoded on the wire (B17b)
 MANIFEST_MAX = 8192       # hard cap on one manifest string
 MANIFEST_VERSION = 1
 TOOL_EXEC_CAP = 3         # consecutive tool-program executions per turn
@@ -115,8 +116,11 @@ FORBIDDEN_WORDS = ("dofile", "loadfile", "load", "require", "collectgarbage")
 RESERVED_TOOL_NAMES = ("manifest", "on_adv", "transform")
 IDENT_RE = re.compile(r"^[A-Za-z_]\w*$")
 DEPLOY_RE = re.compile(
-    r"function\s+(?:on_adv|transform|manifest)\b"
-    r"|(?:on_adv|transform|manifest)\s*=\s*function")
+    r"(?m)function\s+(?:on_adv|transform|manifest)\b"
+    r"|(?:on_adv|transform|manifest)\s*=\s*function"
+    # B17d: ANY re-assignment counts — "manifest = mf" would otherwise
+    # classify as a tool program and execute autonomously.
+    r"|^\s*(?:on_adv|transform|manifest)\s*=")
 
 SYSTEM_PROMPT = """You are the assistant inside a host-side session for an
 ESP32-S3 BLE sniffer dongle. The dongle streams JSON lines over USB; a
@@ -138,6 +142,8 @@ LUA SANDBOX (only for type "lua"):
   dofile and require are absent and using them is rejected by the device.
 - The script must stay under 8192 bytes and each hook must finish in
   under 5 ms.
+- EVERY line of the script must stay under 240 BYTES (the USB console
+  drops longer lines); split long expressions across lines.
 - Hooks (either or both; file-scope locals persist between calls):
   on_adv(addr, addr_type, rssi, name, uuids, manu_id, manu_data) -> boolean
     called per advertisement; true emits the device, false suppresses it
@@ -393,9 +399,13 @@ def lua_exec_lines(src, kind="pack", max_lines=None):
         if tok:
             return None, (f"{kind} rejected: line {i} contains forbidden "
                           f"token '{tok}' (sandbox scan, fail-closed)")
-        if len(line) > LUA_EXEC_LINE_MAX:
-            return None, (f"{kind} rejected: line {i} exceeds the "
-                          f"{LUA_EXEC_LINE_MAX}-byte LUA EXEC line budget")
+        # B6: the device budget is BYTES (256 B USB RX line); counting
+        # characters let multi-byte UTF-8 lines through to a silent drop.
+        nbytes = len(line.encode("utf-8", errors="replace"))
+        if nbytes > LUA_EXEC_LINE_MAX:
+            return None, (f"{kind} rejected: line {i} is {nbytes} bytes, "
+                          f"over the {LUA_EXEC_LINE_MAX}-byte per-line "
+                          "budget (the device drops longer lines)")
         lines.append(line)
         if max_lines is not None and len(lines) > max_lines:
             return None, (f"{kind} rejected: more than {max_lines} "
@@ -451,10 +461,15 @@ def validate_manifest(text):
         args = t.get("args", [])
         if not isinstance(args, list):
             return None, f"tool '{n}': 'args' must be a list"
+        argnames = set()
         for a in args:
             err = _check_arg(a)
             if err:
                 return None, f"tool '{n}': {err}"
+            if a["name"] in argnames:   # B17a: no duplicate arg names
+                return None, (f"tool '{n}': duplicate arg name "
+                              f"'{a['name']}'")
+            argnames.add(a["name"])
         if "mutating" in t and not isinstance(t["mutating"], bool):
             return None, f"tool '{n}': 'mutating' must be a boolean"
     return obj, None
@@ -557,9 +572,12 @@ class ToolRegistry:
                                + '"')
         return "\n".join(out)
 
-    def prompt(self):
+    def prompt(self, native=False):
         """TOOLS system-prompt section; empty string when nothing is
-        registered (H5.3 behavior is then exactly unchanged)."""
+        registered (H5.3 behavior is then exactly unchanged).
+        native=True (B16): describe the native tool-call interface
+        instead of the 'reply with type lua' envelope instructions —
+        mixing both contradicts itself."""
         if not self.packs:
             return ""
         out = ["", "TOOL REGISTRY (functions registered on the device by",
@@ -573,6 +591,19 @@ class ToolRegistry:
                 if t.get("example"):
                     out.append(f'  example: {_arg_call_sig(t)} -> "'
                                f'{t["example"].get("result", "...")}"')
+        if native:
+            out += [
+                "",
+                "TOOL USE: call these tools through the tools interface",
+                "(tool_calls). Every tool takes ONE table argument with",
+                "the manifest-declared named fields, e.g. "
+                "mean({numbers={3,5,10}}) or",
+                'temp_convert({value=100,unit="c"}). Arguments arrive as',
+                "a JSON object; the host turns them into the Lua table",
+                "literal. When done, reply with plain text content (no",
+                "JSON envelope).",
+            ]
+            return "\n".join(out)
         out += [
             "",
             "TOOL USE - when a registered tool would help, reply with type",
@@ -843,12 +874,28 @@ def drain_serial(s, seconds, buf):
     return n
 
 
+def check_line_budget(code, budget=LUA_EXEC_LINE_MAX):
+    """B6: the device USB console silently DROPS lines longer than 255
+    bytes (plain-text 'Read error: -504' that no tool matches), so a
+    deploy could store different code than the human confirmed. Reject
+    overlong lines host-side BEFORE anything is sent."""
+    for i, raw in enumerate(code.splitlines(), 1):
+        n = len(raw.encode("utf-8", errors="replace"))
+        if n > budget:
+            return (f"line {i} is {n} bytes, over the {budget}-byte "
+                    "per-line budget (the device drops longer lines)")
+    return None
+
+
 def upload_script(s, code, buf):
     """F4.2 text-line bridge upload (SCRIPT LOAD -> paced lines -> END).
     The bridge scans every data line fail-closed and answers a violating
     line IMMEDIATELY with -612 (then resets the session), so the send
     loop watches for that mid-upload response instead of reporting a
     misleading -611 state error from the SCRIPT END that follows."""
+    err = check_line_budget(code)
+    if err:
+        return False, err
     r = cmd_json(s, "SCRIPT LOAD", buf)
     if not r or r.get("status") != "ok":
         return False, describe_resp(r)
@@ -890,6 +937,9 @@ def upload_pack(s, name, src, autorun=False, buf=None):
     fail-closed device scan rejects a violating line IMMEDIATELY with
     -612 (and aborts), so the send loop watches for that instead of a
     misleading -611 from the PACK END that follows."""
+    err = check_line_budget(src)
+    if err:
+        return False, err
     r = cmd_json(s, "PACK BEGIN " + name + (" autorun" if autorun else ""),
                  buf)
     if not r or r.get("status") != "ok":
@@ -1001,23 +1051,51 @@ def tools_array(registry):
 
 def lua_args_literal(args):
     """A JSON args object -> ONE Lua table literal with named fields
-    (the pack convention: every tool takes one table). JSON string
-    escaping is valid Lua; numbers/booleans pass through; lists become
-    array tables."""
+    (the pack convention: every tool takes one table). B15: strings are
+    quoted with Lua-valid escapes (json.dumps \\uXXXX is INVALID Lua);
+    non-finite numbers are rejected; non-identifier keys use ["..."]."""
+    def quote(s):
+        out = ['"']
+        for ch in s:
+            o = ord(ch)
+            if ch == '"':
+                out.append('\\"')
+            elif ch == "\\":
+                out.append("\\\\")
+            elif ch == "\n":
+                out.append("\\n")
+            elif ch == "\r":
+                out.append("\\r")
+            elif ch == "\t":
+                out.append("\\t")
+            elif 0x20 <= o < 0x7F:
+                out.append(ch)
+            else:
+                # control chars and non-ASCII: Lua 5.4 \u{X} emits the
+                # UTF-8 byte sequence for the codepoint
+                out.append("\\u{%x}" % o)
+        out.append('"')
+        return "".join(out)
+
     def scalar(v):
         if isinstance(v, bool):
             return "true" if v else "false"
         if isinstance(v, int):
             return str(v)
         if isinstance(v, float):
+            if not math.isfinite(v):   # inf/nan literals are nil in Lua
+                raise ValueError("non-finite numbers are not valid args")
             return repr(v)
         if isinstance(v, str):
-            return json.dumps(v)
+            return quote(v)
         if isinstance(v, list):
             return "{" + ",".join(scalar(x) for x in v) + "}"
         raise ValueError(f"unsupported arg value {v!r}")
 
-    parts = [f"{k}={scalar(v)}" for k, v in args.items()]
+    parts = []
+    for k, v in args.items():
+        key = k if IDENT_RE.match(k) else "[" + quote(k) + "]"
+        parts.append(f"{key}={scalar(v)}")
     return "{" + ",".join(parts) + "}"
 
 
@@ -1214,11 +1292,10 @@ class Session:
         generate-and-execute (single-line program per call), results
         return as role:"tool" messages, the final content is the
         answer. Mutating gate and the execution cap apply unchanged."""
-        prompt = (self.system_prompt + self.tools.prompt()
-                  + "\n\nNATIVE TOOL CALLING is enabled: call the "
-                    "registered tools through the tools interface; when "
-                    "done, reply with plain text content (no JSON "
-                    "envelope).")
+        prompt = (self.system_prompt + self.tools.prompt(native=True)
+                  + "\n\nCall the registered tools through the tools "
+                    "interface; when done, reply with plain text "
+                    "content.")
         messages = build_messages(self.history.view(), snapshot, user_text,
                                   prompt)
         arr = tools_array(self.tools)
@@ -1603,24 +1680,33 @@ class Session:
 
     def fetch_manifest(self):
         """Chunked manifest() fetch: the 256 B LUA EXEC result path cannot
-        carry a whole manifest, so string.sub slices are joined host-side.
-        Returns (text, None) or (None, error_detail)."""
-        parts, pos = [], 1
+        carry a whole manifest, so string.sub slices are fetched HEX-
+        ENCODED (2 chars/byte) and reassembled host-side. B17b: this is
+        byte-exact — a multi-byte UTF-8 char split across a chunk
+        boundary used to decode to U+FFFD mojibake with the plain-text
+        join. Returns (text, None) or (None, error_detail)."""
+        hex_parts, pos = [], 1
         while pos <= MANIFEST_MAX:
-            ok, chunk = self.lua_exec_result(
-                "return string.sub(manifest()," + str(pos) + ","
-                + str(pos + MANIFEST_CHUNK - 1) + ")")
+            code = ("return (string.gsub(string.sub(manifest(),"
+                    + str(pos) + "," + str(pos + MANIFEST_CHUNK - 1)
+                    + '), ".", function(c) '
+                      'return string.format("%02x", c:byte()) end))')
+            ok, chunk = self.lua_exec_result(code)
             if not ok:
                 return None, chunk
             if not chunk:
                 break
-            parts.append(chunk)
-            if len(chunk) < MANIFEST_CHUNK:
+            hex_parts.append(chunk)
+            if len(chunk) < 2 * MANIFEST_CHUNK:
                 break
             pos += MANIFEST_CHUNK
         else:
             return None, "manifest exceeds the 8 KB budget"
-        text = "".join(parts)
+        blob = "".join(hex_parts)
+        try:
+            text = bytes.fromhex(blob).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None, "manifest is not valid UTF-8 (hex fetch)"
         if not text:
             return None, "manifest() returned an empty string"
         return text, None
@@ -1657,16 +1743,37 @@ class Session:
         return r.get("packs", [])
 
     def mutating_names_in(self, code):
-        """Manifest-declared mutating tool names actually called in the
-        program text (static detection — the host holds the manifest)."""
+        """Manifest-declared mutating tool names used in the program text
+        (static detection — the host holds the manifest). B5: a bare
+        REFERENCE counts too: 'local f = bench_reset ... f({})' or
+        '_G["bench_reset"]({})' sail through a call-site-only match, so
+        any standalone identifier occurrence gates the program (slight
+        over-triggering is fine — the gate is a confirmation, not a
+        blocker). Concatenated construction ('bench_'..'reset') remains
+        undetectable statically: documented residual."""
         out = []
         for p in self.tools.packs:
             for t in p["tools"]:
                 if t.get("mutating") and re.search(
-                        r"(?<![A-Za-z0-9_])" + t["name"] + r"\s*\(",
-                        code):
+                        r"(?<![A-Za-z0-9_])" + t["name"]
+                        + r"(?![A-Za-z0-9_])", code):
                     out.append(t["name"])
         return sorted(set(out))
+
+    def warn_mutating_gate_off(self):
+        """B18: hwio-style packs + autonomous execution (decision 10) is
+        the designed default — but the operator deserves a loud note
+        when mutating tools are callable with no confirmation gate."""
+        if self.mutating_gate:
+            return
+        muts = sorted({t["name"] for p in self.tools.packs
+                       for t in p["tools"] if t.get("mutating")})
+        if muts:
+            self.tee.say(
+                "(NOTE: mutating tools registered with the gate OFF: "
+                + ", ".join(muts) + " - LLM programs can call them with "
+                "NO confirmation; restart with --mutating-gate to "
+                "require confirmation)")
 
     def do_tools(self, arg):
         parts = arg.split()
@@ -1790,11 +1897,16 @@ class Session:
             if not ok:
                 self.tee.say(f"(device rejected line {i}: {detail}; "
                              "pack NOT registered)")
+                if i > 1:
+                    self.tee.say("(lines 1.." + str(i - 1) + " are already "
+                                 "live globals on the device; LUA DEINIT "
+                                 "+ re-load the packs to clear them)")
                 return
         text, err = self.fetch_manifest()
         if err:
             self.tee.say("(pack functions are on the device but the "
-                         "manifest fetch failed: " + err + ")")
+                         "manifest fetch failed: " + err + "; LUA DEINIT "
+                         "+ re-load the packs to clear them)")
             return
         m, verr = validate_manifest(text)
         if verr:
@@ -1805,6 +1917,7 @@ class Session:
         if cerr:
             self.tee.say("(" + cerr + ")")
             return
+        self.warn_mutating_gate_off()
         self.tee.say(f"(pack '{m['name']}' registered: {len(m['tools'])} "
                      "tools, run mode)")
         self.tee.say(self.tools.describe())
@@ -1825,6 +1938,16 @@ class Session:
                          + ", ".join(str(p.get("name")) for p in stored)
                          + ")")
             return
+        # B9: the file name is the conventional pack name — when it is
+        # already registered we can refuse BEFORE running stored code
+        # (a manifest declaring a DIFFERENT name cannot be pre-checked
+        # without executing it; the post-run branch below catches and
+        # warns about that case).
+        if any(p["name"] == name for p in self.tools.packs):
+            self.tee.say(f"(pack '{name}' is already registered - refusing "
+                         "to re-run its stored code; /tools refresh "
+                         "instead)")
+            return
         # executing stored code is an explicit act: confirm-gated
         self.tee.say(f"activate stored pack '{name}' on the device? [y/N]")
         line = self.wait_for_line()
@@ -1842,16 +1965,26 @@ class Session:
         text, err = self.fetch_manifest()
         if err:
             self.tee.say("(pack ran but the manifest fetch failed: "
-                         + err + ")")
+                         + err + "; its globals are now live on the "
+                         "device)")
             return
         m, verr = validate_manifest(text)
         if verr:
-            self.tee.say("(manifest rejected: " + verr + ")")
+            self.tee.say("(manifest rejected: " + verr + "; the pack's "
+                         "globals are live on the device - LUA DEINIT + "
+                         "re-load to clear)")
             return
         pack, cerr = self.tools.add(m, "device:" + name)
         if cerr:
             self.tee.say("(" + cerr + ")")
+            # B9: the stored pack already RAN — its globals overwrote the
+            # colliding pack's on the device with no rollback.
+            self.tee.say("(WARNING: the stored pack already ran on the "
+                         "device and its globals have overwritten the "
+                         "colliding pack's; LUA DEINIT + re-load the "
+                         "packs to restore a clean state)")
             return
+        self.warn_mutating_gate_off()
         self.tee.say(f"(pack '{m['name']}' registered: {len(m['tools'])} "
                      "tools, from device storage)")
         self.tee.say(self.tools.describe())

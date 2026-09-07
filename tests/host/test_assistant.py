@@ -887,6 +887,7 @@ class DeployArtifactTests(unittest.TestCase):
         for code in ("function on_adv(a) return true end",
                      "transform = function(a, j) return j end",
                      "function manifest() return M end",
+                     "manifest = mf",        # B17d: indirect re-assignment
                      "-- on_adv = function (mentioned in a comment)"):
             self.assertIsNotNone(assistant.DEPLOY_RE.search(code), code)
 
@@ -944,23 +945,49 @@ class FetchManifestTests(unittest.TestCase):
     def test_chunks_are_joined(self):
         m = DEMO_MANIFEST
         step = assistant.MANIFEST_CHUNK
-        chunks = [m[i:i + step] for i in range(0, len(m), step)]
-        if len(chunks[-1]) == step:
+        # B17b: chunks travel HEX-ENCODED, sliced on BYTES — a multi-byte
+        # UTF-8 char split at a boundary must reassemble exactly.
+        blob = m.encode("utf-8")
+        chunks = [blob[i:i + step].hex()
+                  for i in range(0, len(blob), step)]
+        if len(chunks[-1]) == 2 * step:
             chunks.append("")
         sim = self.FakeSerial([self.lua_ok(c) for c in chunks])
         text, err = self._sess(sim).fetch_manifest()
         self.assertIsNone(err)
         self.assertEqual(text, m)
         sent = [w.decode().strip() for w in sim.written]
-        self.assertIn("LUA EXEC return string.sub(manifest(),1,180)", sent)
-        self.assertIn("LUA EXEC return string.sub(manifest(),181,360)", sent)
+        self.assertIn("LUA EXEC return (string.gsub(string.sub(manifest(),"
+                      "1," + str(step) + ")", sent[0])
+        self.assertIn("string.sub(manifest()," + str(step + 1) + ","
+                      + str(2 * step) + ")", sent[1])
+
+    def test_multibyte_char_split_across_chunks(self):
+        # B17b regression: a 2-byte UTF-8 char straddling a 90-byte
+        # chunk boundary — the old plain-text join turned each half into
+        # U+FFFD; the hex transport reassembles byte-exactly.
+        head = '{"version":1,"name":"x","tools":[{"name":"a","doc":"'
+        pad = 89 - len(head.encode())   # place \xc3 exactly at byte 89
+        m = head + "a" * pad + "\u00e9" + '"}]}'
+        blob = m.encode("utf-8")
+        self.assertEqual(blob[89:91], b"\xc3\xa9")   # straddles 90/91
+        step = assistant.MANIFEST_CHUNK
+        chunks = [blob[i:i + step].hex()
+                  for i in range(0, len(blob), step)]
+        if len(chunks[-1]) == 2 * step:
+            chunks.append("")
+        sim = self.FakeSerial([self.lua_ok(c) for c in chunks])
+        text, err = self._sess(sim).fetch_manifest()
+        self.assertIsNone(err)
+        self.assertEqual(text, m)
 
     def test_engine_not_initialized_heals_once(self):
         not_ready = (b'{"status":"error","cmd":"lua_exec",'
                      b'"msg":"Lua engine not initialized"}\n')
         init_ok = b'{"status":"ok","cmd":"lua_init"}\n'
         m = '{"version":1,"name":"x","tools":[{"name":"a","doc":"d"}]}'
-        sim = self.FakeSerial([not_ready, init_ok, self.lua_ok(m)])
+        sim = self.FakeSerial(
+            [not_ready, init_ok, self.lua_ok(m.encode("utf-8").hex())])
         text, err = self._sess(sim).fetch_manifest()
         self.assertIsNone(err)
         self.assertEqual(text, m)
@@ -1005,13 +1032,18 @@ class ToolReplTests(ReplLoopTests):
                 r["LUA EXEC " + s] = [self.lua_ok("")]
         m = self.PACK_MANIFEST
         step = assistant.MANIFEST_CHUNK
-        chunks = [m[i:i + step] for i in range(0, len(m), step)]
+        # B17b: chunks travel hex-encoded, sliced on bytes
+        blob = m.encode("utf-8")
+        chunks = [blob[i:i + step] for i in range(0, len(blob), step)]
         if len(chunks[-1]) == step:
             chunks.append("")
         for i, c in enumerate(chunks):
             lo = i * step + 1
-            r[f"LUA EXEC return string.sub(manifest(),{lo},{lo + step - 1})"] \
-                = [self.lua_ok(c)]
+            hi = lo + step - 1
+            cmd = ('LUA EXEC return (string.gsub(string.sub(manifest(),'
+                   f'{lo},{hi}), ".", function(c) '
+                   'return string.format("%02x", c:byte()) end))')
+            r[cmd] = [self.lua_ok(c.hex())]
         return r
 
     def write_pack(self):
@@ -1352,7 +1384,8 @@ class ToolsCommandEdgeTests(unittest.TestCase):
         other = ('{"version":1,"name":"otherpack",'
                  '"tools":[{"name":"sum","doc":"d"}]}')
         responses = [(
-            '{"status":"ok","cmd":"lua_exec","result":' + json.dumps(other)
+            '{"status":"ok","cmd":"lua_exec","result":'
+            + json.dumps(other.encode("utf-8").hex())   # hex transport
             + '}\n').encode()]
         sess = self._sess(self.ListSerial(responses))
         self._register(sess)      # host has "tpack"; device serves "otherpack"
@@ -1722,9 +1755,13 @@ class MutatingGateTests(unittest.TestCase):
     def test_names_detected_from_manifest(self):
         self.assertEqual(self.sess.mutating_names_in(
             "return bench_reset({})"), ["bench_reset"])
+        # B5: a bare reference counts too — aliasing must not slip a
+        # mutating call past the gate (was the locked-in blind spot).
         self.assertEqual(self.sess.mutating_names_in(
             "x = bench_reset\nreturn mean({numbers={1}})"),
-            [])                        # bare reference, no call paren
+            ["bench_reset"])
+        self.assertEqual(self.sess.mutating_names_in(
+            'return _G["bench_reset"]({})'), ["bench_reset"])
         self.assertEqual(self.sess.mutating_names_in(
             "return mean({numbers={1}})"), [])
 
@@ -1871,6 +1908,23 @@ class NativeToolsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assistant.lua_args_literal({"x": {"nested": 1}})
 
+    def test_lua_args_literal_b15(self):
+        # non-ASCII -> Lua 5.4 \u{...} (json.dumps \uXXXX is invalid Lua)
+        self.assertEqual(
+            assistant.lua_args_literal({"s": "caf\u00e9\u00b0"}),
+            '{s="caf\\u{e9}\\u{b0}"}')
+        # control chars quoted, never raw
+        self.assertEqual(assistant.lua_args_literal({"s": "a\tb"}),
+                        '{s="a\\tb"}')
+        self.assertIn("\\u{1}", assistant.lua_args_literal({"s": "a\x01b"}))
+        # non-finite floats rejected with a clean error
+        for bad in (float("inf"), float("-inf"), float("nan")):
+            with self.assertRaises(ValueError):
+                assistant.lua_args_literal({"x": bad})
+        # non-identifier keys bracketed instead of breaking the literal
+        self.assertEqual(assistant.lua_args_literal({"some-key": 1}),
+                         '{["some-key"]=1}')
+
     def test_tool_calls_round_trip(self):
         sim = ExecToolProgramTests.ListSerial(
             [ExecToolProgramTests.lua_ok("6.00")])
@@ -1976,6 +2030,65 @@ class NativeToolsTests(unittest.TestCase):
             self.sess.ask_llm("mean of 3?")
         sent = [w.decode().strip() for w in sim.written]
         self.assertIn("LUA EXEC return mean({numbers={3}})", sent)
+
+
+class AuditFixTests(unittest.TestCase):
+    """Regressions for the 2026-09-07 pre-merge audit host fixes
+    (B5/B6/B17a/B18)."""
+
+    def test_line_budget_counts_bytes_not_chars(self):
+        # 100 CJK chars = 300 UTF-8 bytes -> rejected although the line
+        # is under 240 CHARS (B6: the device budget is bytes)
+        line = 's = "' + "\u6d4b" * 100 + '"'
+        self.assertLess(len(line), 240)
+        lines, err = assistant.lua_exec_lines(line)
+        self.assertIsNone(lines)
+        self.assertIn("bytes", err)
+
+    def test_upload_script_rejects_overlong_line_before_sending(self):
+        class Sim:
+            written = []
+
+            def write(self, b):
+                self.written.append(b)
+
+            def flush(self):
+                pass
+
+            def reset_input_buffer(self):
+                pass
+
+        sim = Sim()
+        ok, detail = assistant.upload_script(
+            sim, "x = 1\n" + "y = " + "9" * 300, None)
+        self.assertFalse(ok)
+        self.assertIn("bytes", detail)
+        self.assertEqual(sim.written, [])   # nothing reached the wire
+
+    def test_duplicate_arg_names_rejected(self):
+        m = ('{"version":1,"name":"x","tools":[{"name":"a","doc":"d",'
+             '"args":[{"name":"v","type":"number"},'
+             '{"name":"v","type":"string"}]}]}')
+        man, err = assistant.validate_manifest(m)
+        self.assertIsNone(man)
+        self.assertIn("duplicate arg name", err)
+
+    def test_warn_mutating_gate_off(self):
+        sess = assistant.Session.__new__(assistant.Session)
+        sess.tee = unittest.mock.Mock()
+        sess.mutating_gate = False
+        m, _ = assistant.validate_manifest(DEMO_MANIFEST)
+        sess.tools = assistant.ToolRegistry()
+        sess.tools.add(m, "demo.lua")
+        sess.warn_mutating_gate_off()
+        said = " ".join(str(c.args[0])
+                        for c in sess.tee.say.call_args_list if c.args)
+        self.assertIn("gate OFF", said)
+        self.assertIn("bench_reset", said)
+        sess.tee.reset_mock()
+        sess.mutating_gate = True     # gate on -> stays silent
+        sess.warn_mutating_gate_off()
+        sess.tee.say.assert_not_called()
 
 
 if __name__ == "__main__":
