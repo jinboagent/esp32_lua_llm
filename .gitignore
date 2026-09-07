@@ -77,3 +77,8 @@ hw_peer_out.txt
 build_off_check.txt
 plant_capture.jsonl
 /assistant_*.log
+
+# PPTX deck (PowerPoint sharing/): sources committed, artifacts regenerate
+PowerPoint sharing/node_modules/
+PowerPoint sharing/render*/
+PowerPoint sharing/~$*
