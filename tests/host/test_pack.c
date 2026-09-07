@@ -207,6 +207,70 @@ static void test_two_packs_listed_and_state_machine_untouched(void)
     TEST_ASSERT_EQUAL_INT(0, run("SCAN STOP"));
 }
 
+/* audit B3: each autorun pack occupies TWO dirents (.lua + .autorun);
+ * a listing capped at PACK_MAX_FILES dirents silently drops packs once
+ * markers exist. 6 packs / 3 markers = 9 dirents > 8. */
+static void test_list_shows_all_packs_when_markers_eat_dirents(void)
+{
+    fresh();
+    upload("p1", true,  "m1 = 1");
+    upload("p2", true,  "m2 = 2");
+    upload("p3", true,  "m3 = 3");
+    upload("p4", false, "m4 = 4");
+    upload("p5", false, "m5 = 5");
+    upload("p6", false, "m6 = 6");
+    TEST_ASSERT_EQUAL_INT(0, run("PACK LIST"));
+    for (int i = 1; i <= 6; i++) {
+        char want[16];
+        snprintf(want, sizeof(want), "\"name\":\"p%d\"", i);
+        TEST_ASSERT_TRUE_MESSAGE(strstr(resp, want) != NULL, want);
+    }
+}
+
+/* audit B3, boot side: INTERLEAVED autorun uploads put 2 dirents per pack
+ * at the front — 5 autorun packs = 10 dirents, so p5.lua lands past the
+ * 8-dirent cap and the pack never boots. (Markers appended last would
+ * still be found: existence is checked per-path, not via dirents.) */
+static void test_boot_autorun_runs_marked_pack_past_dirent_cap(void)
+{
+    fresh();
+    upload("p1", true, "m1 = 1");
+    upload("p2", true, "m2 = 2");
+    upload("p3", true, "m3 = 3");
+    upload("p4", true, "m4 = 4");
+    upload("p5", true, "m5 = 5");
+    int ran = pack_store_boot_autorun();
+    TEST_ASSERT_EQUAL_INT(5, ran);
+    TEST_ASSERT_TRUE(strstr(stub_lua_exec_last, "m5 = 5") != NULL);
+}
+
+/* audit B3, door enforcement: a 9th pack could never be listed or
+ * autorun (fixed dirent budget) — BEGIN must reject it, while
+ * overwriting an existing name stays allowed. */
+static void test_upload_rejected_when_store_full(void)
+{
+    fresh();
+    for (int i = 1; i <= 8; i++) {
+        char name[8], body[12];
+        snprintf(name, sizeof(name), "q%d", i);
+        snprintf(body, sizeof(body), "v%d = %d", i, i);
+        upload(name, false, body);
+    }
+    TEST_ASSERT_EQUAL_INT(0, run("PACK BEGIN q9"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"code\":-624") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "store full") != NULL);
+    /* overwrite of an existing name is exempt from the cap */
+    TEST_ASSERT_EQUAL_INT(0, run("PACK BEGIN q1"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"cmd\":\"pack_begin\"") != NULL);
+    TEST_ASSERT_EQUAL_INT(0, run("PACK END"));   /* empty: -612, q1 intact */
+    TEST_ASSERT_TRUE(strstr(resp, "\"code\":-612") != NULL);
+    TEST_ASSERT_NOT_NULL(stub_fs_get("/littlefs/packs/q1.lua", NULL));
+    /* after DEL one, a new name fits again */
+    TEST_ASSERT_EQUAL_INT(0, run("PACK DEL q8"));
+    TEST_ASSERT_EQUAL_INT(0, run("PACK BEGIN q9"));
+    TEST_ASSERT_TRUE(strstr(resp, "\"status\":\"ok\"") != NULL);
+}
+
 static void test_syntax_errors_covered(void)
 {
     fresh();
@@ -234,6 +298,9 @@ int test_pack_main(void)
     fresh(); RUN_TEST(test_cli_command_aborts_upload);
     fresh(); RUN_TEST(test_boot_autorun_runs_only_marked_packs);
     fresh(); RUN_TEST(test_two_packs_listed_and_state_machine_untouched);
+    fresh(); RUN_TEST(test_list_shows_all_packs_when_markers_eat_dirents);
+    fresh(); RUN_TEST(test_boot_autorun_runs_marked_pack_past_dirent_cap);
+    fresh(); RUN_TEST(test_upload_rejected_when_store_full);
     fresh(); RUN_TEST(test_syntax_errors_covered);
 
     printf("  (pack contract: %d responses strictly validated)\n",

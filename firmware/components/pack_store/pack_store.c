@@ -16,6 +16,14 @@
 #define PACK_EXT    ".lua"
 #define PACK_AR_EXT ".autorun"
 
+/*
+ * Dirent budget for one full listing: every autorun pack stores TWO files
+ * (<name>.lua + <name>.autorun), so reading only PACK_MAX_FILES dirents
+ * silently drops packs once markers exist (audit B3). The upload path
+ * enforces the pack cap, so 2x is always enough for the whole store.
+ */
+#define PACK_LIST_DIRENTS (PACK_MAX_FILES * 2)
+
 /* Upload/run scratch. -1 reserves the NUL terminator for exec paths. */
 static uint8_t  s_buf[PACK_MAX_SIZE];
 static uint32_t s_len = 0;
@@ -62,6 +70,29 @@ static void s_set_err(char *err, uint16_t err_len, const char *msg)
         snprintf(err, err_len, "%s", msg);
 }
 
+/* Count stored packs (valid <name>.lua dirents); -1 = listing failed. */
+static int s_count_packs(void)
+{
+    storage_dirent_t ents[PACK_LIST_DIRENTS];
+    uint8_t count = 0;
+    if (storage_list_dir(PACKS_DIR, ents, PACK_LIST_DIRENTS, &count) != 0)
+        return -1;
+    uint8_t packs = 0;
+    for (uint8_t i = 0; i < count; i++) {
+        size_t nl = strlen(ents[i].name);
+        if (nl <= 4 || strcmp(ents[i].name + nl - 4, PACK_EXT) != 0)
+            continue;
+        char name[PACK_MAX_NAME + 1];
+        if (nl - 4 > PACK_MAX_NAME)
+            continue;
+        memcpy(name, ents[i].name, nl - 4);
+        name[nl - 4] = '\0';
+        if (pack_store_name_ok(name))
+            packs++;
+    }
+    return packs;
+}
+
 int pack_store_upload_begin(const char *name, bool autorun,
                             char *err, uint16_t err_len)
 {
@@ -73,6 +104,19 @@ int pack_store_upload_begin(const char *name, bool autorun,
     if (s_uploading) {
         s_set_err(err, err_len, "pack upload already in progress");
         return -611;
+    }
+    /* Enforce the pack cap at the door: a 9th pack could never be seen by
+     * LIST or boot autorun (fixed dirent budget), so reject it up front.
+     * Overwriting an existing name stays allowed. */
+    char path[STORAGE_MAX_PATH_LEN];
+    s_path(path, sizeof(path), name, false);
+    if (storage_file_exists(path) != 1) {
+        int packs = s_count_packs();
+        if (packs >= PACK_MAX_FILES) {
+            s_set_err(err, err_len,
+                      "pack store full (max 8); PACK DEL one first");
+            return -624;
+        }
     }
     s_uploading = true;
     s_autorun_pending = autorun;
@@ -189,9 +233,9 @@ int pack_store_list(char *json, uint16_t json_len)
 {
     if (json == NULL || json_len == 0)
         return -702;
-    storage_dirent_t ents[PACK_MAX_FILES];
+    storage_dirent_t ents[PACK_LIST_DIRENTS];
     uint8_t count = 0;
-    int ret = storage_list_dir(PACKS_DIR, ents, PACK_MAX_FILES, &count);
+    int ret = storage_list_dir(PACKS_DIR, ents, PACK_LIST_DIRENTS, &count);
     if (ret == -706)
         count = 0;               /* dir not created yet: empty list */
     else if (ret != 0)
@@ -265,9 +309,9 @@ int pack_store_boot_autorun(void)
 {
     if (!lua_engine_is_ready())
         return -623;
-    storage_dirent_t ents[PACK_MAX_FILES];
+    storage_dirent_t ents[PACK_LIST_DIRENTS];
     uint8_t count = 0;
-    if (storage_list_dir(PACKS_DIR, ents, PACK_MAX_FILES, &count) != 0)
+    if (storage_list_dir(PACKS_DIR, ents, PACK_LIST_DIRENTS, &count) != 0)
         return 0;
     char path[STORAGE_MAX_PATH_LEN];
     char err[64];

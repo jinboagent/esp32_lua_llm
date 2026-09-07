@@ -235,6 +235,23 @@ static void test_pack_end_compile_error_is_valid_json(void)
     expect("PACK END", 0, "\"code\":-612");
 }
 
+static void test_pack_begin_store_full_is_valid_json(void)
+{
+    /* audit B3: BEGIN rejects a 9th pack (-624) so nothing can live past
+     * the fixed dirent budget; the error response joins the contract. */
+    char r2[256];
+    for (int i = 1; i <= 8; i++) {
+        char begin[24], body[16];
+        snprintf(begin, sizeof(begin), "PACK BEGIN s%d", i);
+        snprintf(body, sizeof(body), "w%d = %d", i, i);
+        expect(begin, 0, "\"cmd\":\"pack_begin\"");
+        TEST_ASSERT_EQUAL_INT(0,
+            cli_process_command(body, r2, sizeof(r2)));
+        expect("PACK END", 0, "\"cmd\":\"pack_end\"");
+    }
+    expect("PACK BEGIN s9", 0, "\"code\":-624");
+}
+
 /* ---- Entry point --------------------------------------------------------- */
 
 int test_cli_responses_main(void)
@@ -254,6 +271,7 @@ int test_cli_responses_main(void)
     fresh(); RUN_TEST(test_status_in_every_state);
     fresh(); RUN_TEST(test_pack_family_all_valid);
     fresh(); RUN_TEST(test_pack_end_compile_error_is_valid_json);
+    fresh(); RUN_TEST(test_pack_begin_store_full_is_valid_json);
 
     printf("  (response contract: %d responses strictly validated)\n",
            n_checked);

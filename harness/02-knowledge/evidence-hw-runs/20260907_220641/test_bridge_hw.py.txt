@@ -1,0 +1,36 @@
+=== F4.1 CLI ===
+  PASS  VERSION 1.0.0
+  PASS  STATUS has state field
+  PASS  SCAN INTERVAL ok
+  PASS  SCAN INTERVAL invalid rejected
+  PASS  SCAN STOP in idle rejected
+  PASS  SCAN START ok
+  PASS  SCAN START while scanning rejected
+  PASS  FILTER ADD while scanning rejected
+  PASS  SCAN STOP ok
+  PASS  FILTER ADD ok
+  PASS  FILTER ADD RSSI ok
+  PASS  FILTER LIST shows 2
+  PASS  FILTER CLEAR ok
+  PASS  unknown command rejected
+  PASS  syntax error reports hint
+=== F4.2 LLM bridge ===
+  PASS  SCRIPT LOAD ready
+  PASS  SCRIPT END ok with size
+  PASS  SCRIPT RUN in idle rejected
+  PASS  SCRIPT RUN while scanning ok
+  PASS  STATUS script_running
+  PASS  SCAN STOP while script running rejected
+  PASS  SCRIPT STOP ok
+  PASS  SCRIPT LOAD (violation test)
+  PASS  sandbox violation aborts upload
+  PASS  SCRIPT LOAD after abort ok
+  PASS  clean line then END ok
+  PASS  empty script rejected
+  PASS  command aborts upload and proceeds
+  PASS  END after abort errors
+  PASS  SCRIPT BEGIN (hex path) ok
+  PASS  SCRIPT CHUNK ok
+  PASS  SCRIPT END (hex path) ok
+
+32 passed, 0 failed

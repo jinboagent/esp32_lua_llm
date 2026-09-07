@@ -9,6 +9,8 @@ Verifies on the real device:
     host-side load, on any PC
   - PACK DEL removes file+marker; boot autorun then finds nothing
   - PACK LIST shape (name/size/autorun/free)
+  - audit B3: markers+packs past the old 8-dirent cap stay visible in
+    LIST and still autorun at boot; a 9th pack is rejected (-624)
 
 Run:  python tests/hw/test_pack_hw.py [port]
 """
@@ -177,6 +179,42 @@ def main():
     check("manifest() alive after reboot with NO host load",
           bool(r and r.get("status") == "ok") and '"version":1' in head,
           head[:60])
+
+    # 5b) audit B3: packs + autorun markers occupy one dirent EACH; with
+    #     the old 8-dirent read cap, packs silently vanished from LIST and
+    #     from boot autorun. Here: demo + 6 packs + 4 markers = 12 files in
+    #     the packs dir; LIST must show every pack, the store cap must
+    #     reject a 9th pack (-624), and after a reboot all marked packs
+    #     must be alive.
+    b3_names = ["b3a", "b3b", "b3c", "b3d", "b3e", "b3f"]
+    marked = {"b3a", "b3c", "b3f"}
+    for n in b3_names:
+        body = [n + "_ran = 1"] if n in marked else [n + "_idle = 1"]
+        ok, detail = upload_pack(s, n, body, autorun=n in marked)
+        check("B3 upload " + n, ok, str(detail))
+    r = cmd(s, "PACK LIST")
+    listed = {p.get("name") for p in (r or {}).get("packs", [])}
+    check("B3: LIST shows all packs (dirents past the old cap)",
+          set(b3_names) <= listed, json.dumps(r))
+    ok, detail = upload_pack(s, "b3g", ["g = 1"])   # 8th pack: fits
+    check("B3: 8th pack still accepted", ok, str(detail))
+    r = cmd(s, "PACK BEGIN b3h")
+    check("B3: 9th pack rejected (-624 store full)",
+          bool(r and r.get("status") == "error"
+               and r.get("code") == -624), json.dumps(r))
+    cmd(s, "PACK DEL b3g")
+    s.close()
+    time.sleep(2.5)
+    s = serial.Serial(PORT, 115200, timeout=1)
+    time.sleep(0.8)
+    boot_banner(s)
+    for n in sorted(marked):
+        r = cmd(s, "LUA EXEC return tostring(" + n + "_ran)")
+        check("B3: " + n + " alive after reboot (autorun past cap)",
+              bool(r and r.get("status") == "ok"
+                   and r.get("result") == "1"), json.dumps(r))
+    for n in b3_names:
+        cmd(s, "PACK DEL " + n)
 
     # 7) forbidden line rejected on-device, mid-upload
     ok, detail = upload_pack(s, "bad", ["t = os.time()"])

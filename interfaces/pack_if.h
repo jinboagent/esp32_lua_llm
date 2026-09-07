@@ -29,6 +29,13 @@ extern "C" {
  *   -621   Pack not found
  *   -622   Pack too large (> 8 KB)
  *   -623   Lua engine not ready
+ *   -624   Pack store full (PACK_MAX_FILES packs stored; name would be new)
+ *
+ * Store budget: at most PACK_MAX_FILES packs, enforced at PACK BEGIN
+ * (overwriting an existing name is always allowed). Each autorun pack
+ * occupies two directory entries (<name>.lua + <name>.autorun); list and
+ * boot-autorun read with a 2x dirent budget so markers can never push a
+ * pack out of view (audit B3).
  */
 
 #define PACK_MAX_NAME   24
@@ -53,7 +60,8 @@ bool pack_store_name_ok(const char *name);
 /*
  * PACK BEGIN <name> [autorun] — open an upload session for <name>.
  * autorun=true writes the boot marker at upload finish.
- * @return 0, or -620/-611; err receives a human-readable reason.
+ * @return 0, or -620/-611/-624 (store full; overwrites exempt);
+ *         err receives a human-readable reason.
  */
 int pack_store_upload_begin(const char *name, bool autorun,
                             char *err, uint16_t err_len);
