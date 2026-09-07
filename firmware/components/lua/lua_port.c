@@ -1,4 +1,5 @@
 #include "lua_if.h"
+#include "lua_hw.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -126,6 +127,10 @@ static void s_setup_sandbox(lua_State *L)
         lua_setfield(L, -2, "dump");
     }
     lua_pop(L, 1);
+
+    /* H6.1 M3: the hw.* device API (gpio/adc/millis/kv) behind a build
+     * flag; a no-op registration when compiled out. */
+    lua_hw_register(L);
 }
 
 /* ---- Engine State ---- */

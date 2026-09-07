@@ -1477,6 +1477,15 @@ class ExecToolProgramTests(unittest.TestCase):
         return ('{"status":"ok","cmd":"lua_exec","result":' + json.dumps(result)
                 + '}\n').encode()
 
+    @staticmethod
+    def begin_ok():
+        return b'{"status":"ok","cmd":"lua_begin","msg":"ready"}\n'
+
+    @staticmethod
+    def end_ok(result):
+        return ('{"status":"ok","cmd":"lua_end","result":'
+                + json.dumps(result) + '}\n').encode()
+
     def _sess(self, serial):
         sess = assistant.Session.__new__(assistant.Session)
         sess.tee = unittest.mock.Mock()
@@ -1484,15 +1493,30 @@ class ExecToolProgramTests(unittest.TestCase):
         sess.s = serial
         return sess
 
-    def test_multi_line_last_return(self):
-        sim = self.ListSerial([self.lua_ok(""), self.lua_ok("6.00")])
+    def test_multi_line_uploads_as_one_chunk(self):
+        """M3: a multi-line program goes through LUA BEGIN/END so locals
+        persist across lines — the wire is BEGIN + raw lines + END. The
+        b"" entries model the read timeout after each silently-acked
+        data line."""
+        sim = self.ListSerial([self.begin_ok(), b"", b"",
+                               self.end_ok("6.00")])
         ok, result = self._sess(sim).exec_tool_program(
             "local a = 1\nreturn mean({numbers={3,5,10}})")
         self.assertTrue(ok)
         self.assertEqual(result, "6.00")
         sent = [w.decode().strip() for w in sim.written]
-        self.assertIn("LUA EXEC local a = 1", sent)
-        self.assertIn("LUA EXEC return mean({numbers={3,5,10}})", sent)
+        self.assertIn("LUA BEGIN", sent)
+        self.assertIn("local a = 1", sent)          # raw line, no prefix
+        self.assertIn("return mean({numbers={3,5,10}})", sent)
+        self.assertIn("LUA END", sent)
+
+    def test_single_line_still_direct_exec(self):
+        sim = self.ListSerial([self.lua_ok("7")])
+        ok, result = self._sess(sim).exec_tool_program("return 7")
+        self.assertTrue(ok)
+        self.assertEqual(result, "7")
+        sent = [w.decode().strip() for w in sim.written]
+        self.assertEqual(sent, ["LUA EXEC return 7"])
 
     def test_no_device(self):
         ok, result = self._sess(None).exec_tool_program("return 1")
@@ -1506,6 +1530,18 @@ class ExecToolProgramTests(unittest.TestCase):
             "return mean({numbers={1,2,3}})")
         self.assertFalse(ok)
         self.assertIn("device rejected", result)
+
+    def test_chunk_rejection_surfaces(self):
+        """exec_tool_program host-scans first with the SAME token list,
+        so the DEVICE-side mid-chunk rejection is exercised at the
+        lua_exec_chunk level directly (upload layer, one line at a
+        time)."""
+        err = ('{"status":"error","cmd":"lua_data","code":-612,'
+               '"msg":"sandbox violation"}\n').encode()
+        ok, detail = assistant.lua_exec_chunk(
+            self.ListSerial([self.begin_ok(), err]), ["t = os.time()"])
+        self.assertFalse(ok)
+        self.assertIn("-612", detail)
 
 
 # ---- H6.1 M2: pack persistence host surface ----------------------------------
@@ -1631,6 +1667,127 @@ class PackReplTests(ToolReplTests):
         self.assertEqual(rc, 0)
         self.assertIn("no such device pack; stored: tpack", log)
         self.assertNotIn("PACK RUN ghost", sim.written)
+
+
+# ---- H6.1 M3: mutating gate + hwio pack --------------------------------------
+
+class MutatingGateTests(unittest.TestCase):
+    """--mutating-gate (decision 10's M3 host-policy return): a program
+    calling a manifest-declared mutating tool needs an explicit y before
+    it executes; declining feeds the LLM a corrective message and does
+    NOT consume the execution budget."""
+
+    def setUp(self):
+        self.sess = assistant.Session.__new__(assistant.Session)
+        self.sess.tee = unittest.mock.Mock()
+        self.sess.buf = assistant.DeviceBuffer()
+        self.sess.history = assistant.History()
+        self.sess.cfg = {"base": "https://x/v1", "key": "k", "model": "m"}
+        self.sess.system_prompt = assistant.SYSTEM_PROMPT
+        self.sess.mutating_gate = True
+        self.sess.s = None
+        m, _ = assistant.validate_manifest(DEMO_MANIFEST)
+        self.sess.tools = assistant.ToolRegistry()
+        self.sess.tools.add(m, "demo.lua")
+
+    @staticmethod
+    def program():
+        return json.dumps({"type": "lua", "text": "reset",
+                           "code": "return bench_reset({})"})
+
+    def said(self):
+        return " ".join(str(c.args[0])
+                        for c in self.sess.tee.say.call_args_list
+                        if c.args)
+
+    def test_names_detected_from_manifest(self):
+        self.assertEqual(self.sess.mutating_names_in(
+            "return bench_reset({})"), ["bench_reset"])
+        self.assertEqual(self.sess.mutating_names_in(
+            "x = bench_reset\nreturn mean({numbers={1}})"),
+            [])                        # bare reference, no call paren
+        self.assertEqual(self.sess.mutating_names_in(
+            "return mean({numbers={1}})"), [])
+
+    def test_gate_declined_blocks_execution(self):
+        self.sess.reader = unittest.mock.Mock()
+        self.sess.reader.poll_line.side_effect = ["n", ""]
+        replies = [self.program(),
+                   '{"type":"answer","text":"ok without reset"}']
+        it = iter(replies)
+        with unittest.mock.patch.object(
+                assistant, "llm_chat",
+                side_effect=lambda *a, **k: next(it)) as chat:
+            self.sess.ask_llm("reset the bench")
+        self.assertEqual(chat.call_count, 2)
+        said = self.said()
+        self.assertIn("mutating tool(s): bench_reset", said)
+        self.assertIn("execute? [y/N]", said)
+        self.assertIn("(declined - nothing was executed)", said)
+        self.assertIn("llm: ok without reset", said)
+
+    def test_gate_confirmed_runs(self):
+        self.sess.reader = unittest.mock.Mock()
+        self.sess.reader.poll_line.side_effect = ["y", ""]
+        replies = [self.program(),
+                   '{"type":"answer","text":"done"}']
+        it = iter(replies)
+        with unittest.mock.patch.object(
+                assistant, "llm_chat",
+                side_effect=lambda *a, **k: next(it)):
+            self.sess.ask_llm("reset the bench")
+        said = self.said()
+        self.assertIn("confirm> y", said)
+        # device is None here, so the confirmed run surfaces as a clean
+        # execution failure fed back to the LLM - the GATE let it through
+        self.assertNotIn("(declined", said)
+        self.assertIn("llm: done", said)
+
+    def test_gate_off_by_default(self):
+        self.sess.mutating_gate = False
+        self.sess.reader = unittest.mock.Mock()
+        self.sess.reader.poll_line.return_value = ""
+        replies = [self.program(),
+                   '{"type":"answer","text":"done"}']
+        it = iter(replies)
+        with unittest.mock.patch.object(
+                assistant, "llm_chat",
+                side_effect=lambda *a, **k: next(it)):
+            self.sess.ask_llm("reset the bench")
+        self.assertNotIn("execute? [y/N]", self.said())
+
+
+class HwioPackTests(unittest.TestCase):
+    """The shipped hwio pack obeys the convention and its manifest
+    assembles + validates (same replay guard that pinned the demo pack
+    after the 2026-09-05 stray-brace bug)."""
+
+    PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "..", "..", "host_app", "tool_packs", "hwio.lua")
+
+    def setUp(self):
+        with open(self.PATH, encoding="utf-8") as f:
+            self.src = f.read()
+
+    def test_lines_within_convention(self):
+        lines, err = assistant.lua_exec_lines(self.src)
+        self.assertIsNone(err, err)
+        self.assertTrue(all(len(l) <= assistant.LUA_EXEC_LINE_MAX
+                            for l in lines))
+        self.assertEqual(len([l for l in lines
+                              if l.startswith("function ")]), 7)
+
+    def test_manifest_assembles_valid(self):
+        text, aerr = assistant.assemble_manifest_from_source(self.src)
+        self.assertIsNone(aerr, aerr)
+        m, verr = assistant.validate_manifest(text)
+        self.assertIsNone(verr, verr)
+        self.assertEqual(m["name"], "hwio")
+        self.assertEqual([t["name"] for t in m["tools"]],
+                         ["uptime_ms", "pin_read", "pin_write", "adc_raw",
+                          "cfg_set", "cfg_get"])
+        mut = [t["name"] for t in m["tools"] if t.get("mutating")]
+        self.assertEqual(mut, ["pin_write", "cfg_set"])
 
 
 if __name__ == "__main__":

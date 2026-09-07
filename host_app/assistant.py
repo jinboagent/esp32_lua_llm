@@ -582,10 +582,10 @@ class ToolRegistry:
             "your final answer.",
             "Every tool takes ONE table argument, e.g. "
             "mean({numbers={3,5,10}}) or temp_convert({value=100,unit=\"c\"}).",
-            "Program limits: one complete statement per line, at most 240",
-            "bytes per line; variables do NOT persist between lines - keep",
-            "the whole program on ONE line ending in `return <string>`;",
-            "only the last line's return value is captured.",
+            "Program limits: prefer ONE line ending in `return <string>`.",
+            "Longer programs work too - they upload as a single chunk,",
+            "so locals persist across lines; keep each line <= 240 bytes",
+            "and at most 12 lines.",
             "Never define on_adv/transform/manifest in a tool program -",
             "those are filter/pack artifacts and go through the human",
             "deploy confirmation instead.",
@@ -926,6 +926,45 @@ def upload_pack(s, name, src, autorun=False, buf=None):
     return True, "stored"
 
 
+def lua_exec_chunk(s, lines, buf=None):
+    """H6.1 M3: upload a multi-line program as ONE chunk (LUA BEGIN ->
+    raw text lines -> LUA END) so locals persist across lines; the END
+    response carries the exec result. Data lines ack silently; a
+    violating line answers -612 immediately and aborts (same protocol
+    shape as every other text upload)."""
+    r = cmd_json(s, "LUA BEGIN", buf)
+    if not r or r.get("status") != "ok":
+        return False, describe_resp(r)
+    old_timeout = s.timeout
+    s.timeout = 0.12
+    try:
+        for ln in lines:
+            s.write((ln + "\n").encode())
+            s.flush()
+            time.sleep(0.05)
+            while True:
+                raw = s.readline()
+                if not raw:
+                    break
+                txt = raw.decode(errors="replace").strip()
+                if not txt:
+                    continue
+                if buf is not None:
+                    buf.add_line(txt)
+                if txt.startswith("{") and '"status":"error"' in txt:
+                    try:
+                        return False, describe_resp(json.loads(txt))
+                    except (json.JSONDecodeError, ValueError):
+                        return False, txt
+        time.sleep(0.3)
+    finally:
+        s.timeout = old_timeout
+    r = cmd_json(s, "LUA END", buf)
+    if not r or r.get("status") != "ok":
+        return False, describe_resp(r)
+    return True, r.get("result", "")
+
+
 def stop_all(s, tee, buf):
     """Orderly cleanup on every exit path (N3: port closes after this).
     Errors here are expected when a plane is already idle; they are
@@ -966,9 +1005,10 @@ is buffered and echoed when the turn finishes."""
 
 class Session:
     def __init__(self, port, no_llm=False, system_file=None,
-                 system_extra=None):
+                 system_extra=None, mutating_gate=False):
         self.port = port
         self.no_llm = no_llm
+        self.mutating_gate = mutating_gate
         self.tee = Tee(time.strftime("assistant_%Y%m%d_%H%M%S.log"))
         self.reader = ConsoleReader(self.tee)
         self.buf = DeviceBuffer()
@@ -1101,6 +1141,31 @@ class Session:
                 and code is not None and not self.tools.is_empty()
                 and not DEPLOY_RE.search(strip_outer_fence(code)))
             if is_program and executed < TOOL_EXEC_CAP:
+                # optional host-policy gate (decision 10's M3 return of
+                # the mutating gate): confirm before a program that calls
+                # a mutating tool. Declining does NOT consume the budget.
+                gated = self.mutating_names_in(code) if self.mutating_gate \
+                    else []
+                if gated:
+                    self.tee.say("tool program calls mutating tool(s): "
+                                 + ", ".join(gated))
+                    self.tee.say("execute? [y/N]")
+                    line = self.wait_for_line()
+                    if line is None or line.strip().lower() not in ("y",
+                                                                    "yes"):
+                        self.tee.say("(declined - nothing was executed)")
+                        self.history.add("user",
+                                         "MUTATING GATE: declined")
+                        messages.append({"role": "assistant",
+                                         "content": reply})
+                        messages.append({
+                            "role": "user",
+                            "content": "The user DECLINED to run the "
+                            "mutating tool(s). Do not call them again; "
+                            "give your final answer without further "
+                            "execution."})
+                        continue
+                    self.tee.say(f"  confirm> {line}")
                 # generate-and-execute (H6.1 d7+d10): run the program on
                 # the device now, hand the result back, let the LLM finish
                 ok, result = self.exec_tool_program(strip_outer_fence(code))
@@ -1345,22 +1410,25 @@ class Session:
         return text, None
 
     def exec_tool_program(self, code):
-        """Run-mode execution (decision 14 `run` + decision 10 autonomy):
-        validate lines host-side, exec each on the device, the LAST line's
-        return value is the program result. Returns (ok, result)."""
+        """Run-mode execution (decision 14 `run` + decision 10 autonomy).
+        A one-line program goes straight through LUA EXEC; anything
+        longer uploads as ONE chunk (LUA BEGIN/END) so locals persist
+        across lines. Returns (ok, result)."""
         lines, err = lua_exec_lines(code, kind="tool program",
                                     max_lines=TOOL_PROGRAM_MAX_LINES)
         if err:
             return False, err
         if self.s is None:
             return False, "no device connected"
-        result = ""
-        for ln in lines:
-            ok, out = self.lua_exec_result(ln)
+        if len(lines) == 1:
+            ok, out = self.lua_exec_result(lines[0])
             if not ok:
-                return False, f"device rejected {ln[:60]!r}: {out}"
-            result = out or "(no return value)"
-        return True, result
+                return False, f"device rejected {lines[0][:60]!r}: {out}"
+        else:
+            ok, out = lua_exec_chunk(self.s, lines, self.buf)
+            if not ok:
+                return False, f"device rejected: {out}"
+        return True, out or "(no return value)"
 
     def device_packs(self):
         """H6.1 M2: PACK LIST -> the persisted packs (or None when the
@@ -1371,6 +1439,18 @@ class Session:
         if not r or r.get("status") != "ok":
             return None
         return r.get("packs", [])
+
+    def mutating_names_in(self, code):
+        """Manifest-declared mutating tool names actually called in the
+        program text (static detection — the host holds the manifest)."""
+        out = []
+        for p in self.tools.packs:
+            for t in p["tools"]:
+                if t.get("mutating") and re.search(
+                        r"(?<![A-Za-z0-9_])" + t["name"] + r"\s*\(",
+                        code):
+                    out.append(t["name"])
+        return sorted(set(out))
 
     def do_tools(self, arg):
         parts = arg.split()
@@ -1707,9 +1787,14 @@ def main():
                    help="append the file's content to the built-in "
                         "system prompt - steer style/persona/behavior "
                         "without losing the envelope contract")
+    p.add_argument("--mutating-gate", action="store_true",
+                   help="H6.1 M3 host-policy option: confirm before "
+                        "executing a tool program that calls a "
+                        "manifest-declared mutating tool (static "
+                        "detection from the registry)")
     args = p.parse_args()
     sys.exit(Session(args.port, args.no_llm, args.system_file,
-                     args.system_extra).run())
+                     args.system_extra, args.mutating_gate).run())
 
 
 if __name__ == "__main__":

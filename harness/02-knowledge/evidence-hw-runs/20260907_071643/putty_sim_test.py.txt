@@ -1,0 +1,121 @@
+=== PuTTY-style session transcript (CR endings) ===
+> STATUS
+
+{"status":"ok","cmd":"status","state":"idle","reset_reason":11,"scanning":false,"queue_drops":0,"filter_count":0,"lua_ready":true,"script_loaded":false,"script_running":false,"free_storage":40960,"free_heap":94336,"lua_pool":{"used":12380,"peak":12380},"pipeline":{"received":0,"filtered":0,"output":0,"parse_err":0,"encode_err":0},"conn":{"enabled":true,"state":"off","active":false,"addr":"00:00:00:00:00:00","tx_lines":0,"dropped":0},"v":1}
+
+
+> VERSION
+
+{"status":"ok","cmd":"version","firmware":"1.0.0","build_date":"Sep  7 2026","chip":"esp32s3"}
+
+
+> SCAN START
+
+[0;32mI (2591) NimBLE: GAP procedure initiated: discovery; [0m
+
+[0;32mI (2591) NimBLE: own_addr_type=0 filter_policy=0 passive=1 limited=0 filter_duplicates=0 [0m
+
+[0;32mI (2592) NimBLE: duration=forever[0m
+
+[0;32mI (2592) NimBLE: 
+
+[0m
+
+BLE: passive scan started (interval=100ms, window=50ms)
+
+Pipeline: started
+
+{"status":"ok","cmd":"scan_start"}
+
+{"ts":2609,"addr":"AE:A4:F6:42:D0:C1","type":"random","rssi":-85,"name":"LHB-0B05EA98","uuids":[],"manu":{"id":"055D","data":"00020101000600"},"flags":"06"}
+
+{"ts":2729,"addr":"F9:F0:EF:D7:C1:5C","type":"public","rssi":-92,"name":null,"uuids":[],"manu":{"id":"0075","data":"42040180665CC1D7EFF0F95EC1D7EFF0F801000000000000"}}
+
+{"ts":2809,"addr":"F8:AC:12:27:96:14","type":"random","rssi":-65,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092002983F778F68A16806ABBC813EE0B4C5313F42FBADE59A05"}}
+
+{"ts":2813,"addr":"EE:1C:84:8C:B6:4E","type":"random","rssi":-64,"name":null,"uuids":["180A"],"manu":null,"flags":"1A"}
+
+{"ts":3020,"addr":"D7:F6:F7:01:CB:04","type":"public","rssi":-73,"name":null,"uuids":[],"manu":{"id":"0075","data":"021844A12B435E33CAE85112F69D28E10D14EF04A5E7EF06"},"flags":"18"}
+
+{"ts":3220,"addr":"B1:93:4C:57:FA:60","type":"random","rssi":-89,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":3301,"addr":"D9:D7:84:DF:B4:DB","type":"random","rssi":-85,"name":null,"uuids":[],"manu":{"id":"004C","data":"12020000"}}
+
+{"ts":3402,"addr":"6A:13:84:96:86:7D","type":"random","rssi":-91,"name":null,"uuids":[],"manu":{"id":"004C","data":"10077C1FDF9CD82478"},"tx_power":12,"flags":"1A"}
+
+
+[scan stream: 32 adv lines in 2 s]
+sample: {"ts":6604,"addr":"43:ED:93:F7:20:C9","type":"random","rssi":-92,"name":null,"uuids":[],"manu":{"id":"004C","data":"12020003"}}
+> STATUS
+
+{"status":"ok","cmd":"status","state":"scanning","reset_reason":11,"scanning":true,"queue_drops":0,"filter_count":0,"lua_ready":true,"script_loaded":false,"script_running":false,"free_storage":40960,"free_heap":92624,"lua_pool":{"used":12380,"peak":12380},"pipeline":{"received":68,"filtered":0,"output":68,"parse_err":0,"encode_err":0},"conn":{"enabled":true,"state":"off","active":false,"addr":"00:00:00:00:00:00","tx_lines":0,"dropped":0},"v":1}
+
+{"ts":9693,"addr":"EE:1C:84:8C:B6:4E","type":"random","rssi":-64,"name":null,"uuids":["180A"],"manu":null,"flags":"1A"}
+
+{"ts":9829,"addr":"AE:A4:F6:42:D0:C1","type":"random","rssi":-84,"name":"LHB-0B05EA98","uuids":[],"manu":{"id":"055D","data":"00020101000600"},"flags":"06"}
+
+{"ts":10092,"addr":"F8:AC:12:27:96:14","type":"random","rssi":-58,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092002983F778F68A16806ABBC813EE0B4C5313F42FBADE59A05"}}
+
+{"ts":10620,"addr":"43:ED:93:F7:20:C9","type":"random","rssi":-90,"name":null,"uuids":[],"manu":{"id":"004C","data":"12020003"}}
+
+
+> SCAN STOP
+
+Pipeline: stopped (received=72, filtered=0, output=72, parse_err=0, encode_err=0)
+
+Pipeline: stack high-water mark: 644 bytes free
+
+BLE: scan stopped
+
+{"status":"ok","cmd":"scan_stop"}
+
+
+> SCAN START
+
+[0;32mI (11637) NimBLE: GAP procedure initiated: discovery; [0m
+
+[0;32mI (11637) NimBLE: own_addr_type=0 filter_policy=0 passive=1 limited=0 filter_duplicates=0 [0m
+
+[0;32mI (11638) NimBLE: duration=forever[0m
+
+[0;32mI (11638) NimBLE: 
+
+[0m
+
+BLE: passive scan started (interval=100ms, window=50ms)
+
+Pipeline: started
+
+{"status":"ok","cmd":"scan_start"}
+
+{"ts":11651,"addr":"AE:A4:F6:42:D0:C1","type":"random","rssi":-84,"name":"LHB-0B05EA98","uuids":[],"manu":{"id":"055D","data":"00020101000600"},"flags":"06"}
+
+{"ts":11652,"addr":"C1:F7:C5:3D:52:98","type":"public","rssi":-97,"name":"JBL Charge 4","uuids":[],"manu":{"id":"0057","data":"291F01002DAF"},"flags":"18"}
+
+{"ts":11655,"addr":"6A:13:84:96:86:7D","type":"random","rssi":-92,"name":null,"uuids":[],"manu":{"id":"004C","data":"10077C1FDF9CD82478"},"tx_power":12,"flags":"1A"}
+
+{"ts":11666,"addr":"D7:F6:F7:01:CB:04","type":"public","rssi":-79,"name":null,"uuids":[],"manu":{"id":"0075","data":"420401806704CB01F7F6D706CB01F7F6D607410923C6782B"},"flags":"18"}
+
+{"ts":11682,"addr":"F9:F0:EF:D7:C1:5C","type":"public","rssi":-83,"name":null,"uuids":[],"manu":{"id":"0075","data":"42040180665CC1D7EFF0F95EC1D7EFF0F801000000000000"}}
+
+{"ts":11752,"addr":"26:78:6E:93:FE:51","type":"random","rssi":-91,"name":null,"uuids":["FE3C"],"manu":{"id":"000A","data":"474200352B0C495321BD2D30B1979710763CD10C"}}
+
+{"ts":11763,"addr":"EE:1C:84:8C:B6:4E","type":"random","rssi":-53,"name":null,"uuids":["180A"],"manu":null,"flags":"1A"}
+
+{"ts":11766,"addr":"F8:AC:12:27:96:14","type":"random","rssi":-53,"name":null,"uuids":[],"manu":{"id":"0006","data":"01092002983F778F68A16806ABBC813EE0B4C5313F42FBADE59A05"}}
+
+{"ts":12243,"addr":"B1:93:4C:57:FA:60","type":"random","rssi":-88,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+{"ts":12279,"addr":"FA:87:09:48:B4:49","type":"random","rssi":-94,"name":null,"uuids":[],"manu":{"id":"004C","data":"1006741DBC7DC848"},"tx_power":12,"flags":"1A"}
+
+{"ts":12369,"addr":"AF:8B:F4:BA:A4:58","type":"random","rssi":-90,"name":null,"uuids":["FEA0"],"manu":null,"flags":"02"}
+
+
+[Ctrl+C] interrupt response: PASS
+[Ctrl+C] stream stopped: PASS (0 adv after)
+> STATUS
+
+{"status":"ok","cmd":"status","state":"idle","reset_reason":11,"scanning":false,"queue_drops":0,"filter_count":0,"lua_ready":true,"script_loaded":false,"script_running":false,"free_storage":40960,"free_heap":92624,"lua_pool":{"used":12380,"peak":12380},"pipeline":{"received":104,"filtered":0,"output":104,"parse_err":0,"encode_err":0},"conn":{"enabled":true,"state":"off","active":false,"addr":"00:00:00:00:00:00","tx_lines":0,"dropped":0},"v":1}
+
+
+=== end ===

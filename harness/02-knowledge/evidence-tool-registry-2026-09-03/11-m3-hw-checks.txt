@@ -1,0 +1,20 @@
+=== H6.1 M3 hw.* + chunk hardware checks on COM12 ===
+[PASS] hw table present (CONFIG_LUA_HW_BINDINGS=y)
+[PASS] millis() advances
+[PASS] gpio_write(4,1) ok
+[PASS] gpio_read(4) returns the driven level
+[PASS] USB pin 19 refused (fail-closed whitelist)
+[PASS] adc_read(4) raw in 0..4095
+[PASS] adc outside gpio1..10 refused
+[PASS] kv_set ok
+[PASS] kv_get round-trips
+[PASS] absent key reads nil
+[PASS] chunk: locals persist across lines (21*2)
+[PASS] chunk forbidden line -> -612 mid-upload
+[PASS] hwio pack stored
+[PASS] hwio pack runs
+[PASS] tool uptime_ms() works
+[PASS] tool cfg_set works
+[PASS] CONFIGURE PROOF: raw kv value survives reboot
+[PASS] CONFIGURE PROOF: tool reads the survived value
+=== 18 passed, 0 failed ===
