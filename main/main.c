@@ -32,7 +32,8 @@ void app_main(void)
      * closes the COM port mid-scan (USB-Serial/JTAG chip behavior). */
     printf("Reset reason: %d\n", (int)esp_reset_reason());
     printf("Commands: STATUS, VERSION, SCAN START/STOP/INTERVAL, "
-           "FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/DEINIT, "
+           "FILTER ADD/CLEAR/LIST, LUA INIT/EXEC/BEGIN/END/DEINIT, "
+           "PACK LIST/BEGIN/END/RUN/DEL/AUTORUN, "
            "SCRIPT LOAD/BEGIN/CHUNK/END/RUN/STOP/STATUS, POWER"
 #ifdef CONFIG_BLE_CONN_ENABLED
            ", CONN TARGET/START/STOP/STATUS/INTERVAL"

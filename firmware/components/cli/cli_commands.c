@@ -43,6 +43,22 @@
  * pipeline_set_filter(cli_get_filter_engine())) */
 static filter_engine_t s_filter_engine;
 
+/* H6.1 M3: LUA BEGIN ... LUA END chunk session — a longer program is
+ * uploaded as text lines (fail-closed scanned like every other Lua
+ * path) and executed as ONE chunk on END, so locals persist across
+ * lines. Valid in any CLI state (tools live outside the state machine,
+ * decision 11). */
+#define LUA_CHUNK_MAX 4096
+static char     s_chunk[LUA_CHUNK_MAX];
+static uint32_t s_chunk_len = 0;
+static bool     s_chunk_active = false;
+
+static void s_lua_chunk_abort(void)
+{
+    s_chunk_active = false;
+    s_chunk_len = 0;
+}
+
 /* Write formatted JSON into the response buffer; on truncation write a
  * truncated-error JSON and return CLI_ERR_BUFFER from the caller. */
 #define CLI_EMIT(resp, len, ...)                                             \
@@ -470,6 +486,59 @@ static int h_lua(const char *action, char *response, uint16_t response_len)
         return 0;
     }
 
+    if (strcmp(action, "BEGIN") == 0) {
+        if (s_chunk_active) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_begin\","
+                "\"code\":-911,\"msg\":\"chunk upload already in progress\"}");
+            return 0;
+        }
+        if (!lua_engine_is_ready()) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_begin\","
+                "\"msg\":\"Lua engine not initialized\"}");
+            return 0;
+        }
+        s_chunk_active = true;
+        s_chunk_len = 0;
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"lua_begin\",\"msg\":\"ready\"}");
+        return 0;
+    }
+
+    if (strcmp(action, "END") == 0) {
+        if (!s_chunk_active) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_end\","
+                "\"code\":-911,\"msg\":\"no chunk in progress\"}");
+            return 0;
+        }
+        s_chunk[s_chunk_len] = '\0';
+        s_chunk_active = false;
+        if (!lua_engine_is_ready()) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_end\","
+                "\"msg\":\"Lua engine not initialized\"}");
+            return 0;
+        }
+        char lua_result[LUA_RESULT_MAX_LEN] = {0};
+        int ret = lua_engine_exec(s_chunk, lua_result, sizeof(lua_result));
+        char result_esc[LUA_RESULT_MAX_LEN * 2];
+        json_escape_str(lua_result[0] ? lua_result
+                                      : (ret == 0 ? "" : "exec failed"),
+                        result_esc, sizeof(result_esc));
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"lua_end\","
+                "\"result\":\"%s\"}", result_esc);
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_end\","
+                "\"code\":%d,\"msg\":\"%s\"}", ret, result_esc);
+        }
+        return 0;
+    }
+
     if (strcmp(action, "INIT") == 0) {
         int ret = lua_engine_init();
         if (ret == 0) {
@@ -506,7 +575,47 @@ static int h_lua(const char *action, char *response, uint16_t response_len)
         return 0;
     }
 
-    return s_syntax_error(response, response_len, "LUA EXEC|INIT|DEINIT");
+    return s_syntax_error(response, response_len,
+                          "LUA EXEC|INIT|DEINIT|BEGIN|END");
+}
+
+/* One data line during a LUA chunk upload (silent ack on success; a
+ * violating line answers immediately and aborts, like the F4.2 bridge
+ * and pack uploads). */
+static int s_lua_chunk_line(const char *line, char *response,
+                            uint16_t response_len)
+{
+    if (!s_chunk_active) {
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"lua_data\","
+            "\"code\":-911,\"msg\":\"no chunk in progress\"}");
+        return 0;
+    }
+    uint32_t len = (uint32_t)strlen(line);
+    if (len == 0) {
+        response[0] = '\0';
+        return 0;               /* blank lines are legal Lua, store none */
+    }
+    const char *tok = bridge_scan_line(line, len);
+    if (tok != NULL) {
+        s_lua_chunk_abort();
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"lua_data\",\"code\":-612,"
+            "\"msg\":\"sandbox violation: '%s' is not allowed\"}", tok);
+        return 0;
+    }
+    if (s_chunk_len + len + 1 > LUA_CHUNK_MAX - 1) {
+        s_lua_chunk_abort();
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"lua_data\","
+            "\"code\":-803,\"msg\":\"chunk buffer full\"}");
+        return 0;
+    }
+    memcpy(s_chunk + s_chunk_len, line, len);
+    s_chunk_len += len;
+    s_chunk[s_chunk_len++] = '\n';
+    response[0] = '\0';
+    return 0;
 }
 
 /* ---- SCRIPT ----------------------------------------------------------- */
@@ -1092,6 +1201,16 @@ int cli_process_command(const char *cmd, char *response, uint16_t response_len)
             pack_store_abort();
         else
             return h_pack_data_line(cmd, response, response_len);
+    }
+
+    /* H6.1 M3 chunk upload: same shape again; LUA END executes it. */
+    if (s_chunk_active) {
+        if (strcmp(cmd, "LUA END") == 0)
+            return h_lua("END", response, response_len);
+        if (s_is_cli_command(cmd))
+            s_lua_chunk_abort();
+        else
+            return s_lua_chunk_line(cmd, response, response_len);
     }
 
     if (strcmp(cmd, "STATUS") == 0)
