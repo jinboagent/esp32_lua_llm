@@ -14,12 +14,13 @@ ESP32-S3 passive BLE advertisement scanner → AD parse → C filters → option
 | `host_app/run_case.py` (H5.2) | pluggable data-generator "cases" over the conn plane; `--estimate` checks the LLM against ground truth | demoing/verifying the connection plane end-to-end |
 | `host_app/assistant.py` (H5.3) | interactive session: typed `answer\|lua\|clarify\|error` envelopes, human-confirmed deploys, `--system-extra/--system-file` prompt experiments | human-in-the-loop work, exploring the live data |
 
-## Current Status: v1.1.0 — stages 1–5 complete
+## Current Status: v1.1.0 on master — stages 1–5 complete; H6.1 M1–M4 on branch
 
 - All 13 firmware features (stages 1–4) + F2.4 conn plane + stage-5 host tooling implemented and hardware-verified
 - 2026-08-28: F2.4 GATT data path fixed end-to-end (NimBLE discovery callback dispatch, JSON merge separators, `CONN TARGET` response validity); stage 5 squash-merged
-- Verification inventory: Unity 126 total (108 unit + response contract 10 + fuzz 8; 76 responses strict-JSON validated) · python units 49/49 (assistant) + 33/33 (run_case) · `test_ble_conn_hw.py` 65/0 (2 informed SKIPs; C7 state matrix included) · plant demo 60/60 conn lines, τ_est 9.5 vs 10.0 · soak_conn smoke green
-- Next candidate work: `read_only` case (dongle poll path — the only data path no case covers), F2.4 backlog (firmware-side CONN STOP settle, strict-JSON sweep over CLI responses), llm_loop `-612` upload blind spot; see `status/LATEST.md`
+- **2026-09-03→07: H6.1 Lua Tool Registry M1–M4** on branch `Lua_tool_extension_dev` (unmerged, review pending): tool packs (`manifest()` convention) + generate-and-execute, LittleFS pack persistence + boot autorun (`PACK` CLI family), `hw.*` device bindings behind `CONFIG_LUA_HW_BINDINGS` (gpio whitelist/ADC/kv configure-mode store), `LUA BEGIN/END` chunk exec, `--mutating-gate`, `--native-tools`; spec `harness/01-features/stage6-agent/`
+- Verification inventory (with the branch): Unity 147 (response contract 87 strict-JSON) · python assistant 144 + run_case 35 + llm_loop 10 · hw: conn 65/0, pack 13/13 (boot-autorun proof), hwio 18/18 (kv-reboot proof), `run_all_hw.py` gate 6/6 · plant demo 60/60, τ_est 9.5 vs 10.0 · soak green
+- Next candidate work: review+merge H6.1; optional M1.5 pseudo-push; F2.4 backlog (firmware-side CONN STOP settle); see `status/LATEST.md`
 
 ## Key Rules
 
@@ -50,13 +51,15 @@ cmake -S tests/host -B /tmp/hostbuild -G Ninja && cmake --build /tmp/hostbuild &
 # strict-JSON validated, 76 responses) + fuzz/boundary/scanner corpus
 
 # Python unit tests (host tooling)
-python tests/host/test_assistant.py    # 49 (incl. golden transcripts + whole REPL sessions)
-python tests/host/test_run_case.py     # 33
+python tests/host/test_assistant.py    # 144 (tool registry, gates, native tools, whole REPL sessions)
+python tests/host/test_run_case.py     # 35
 
 # Hardware suites (dongle on COM12) — the one-command regression gate:
 python tests/hw/run_all_hw.py          # whole battery + reset-reason gate + transcripts
 # or individually:
 python tests/hw/test_ble_conn_hw.py    # 65 checks (C0 + C1-C6 GATT tier + C7 state matrix)
+python tests/hw/test_pack_hw.py         # H6.1 packs + boot autorun (reboot proof)
+python tests/hw/test_hwio_hw.py         # H6.1 hw.* + kv configure-mode (reboot proof)
 python tests/hw/test_ble_lua_hw.py     # BLE+Lua data plane
 python tests/hw/test_bridge_hw.py      # F4.1+F4.2
 python tests/hw/test_power_hw.py       # F4.3
@@ -76,7 +79,7 @@ python tests/hw/soak_conn.py --secs 3600 --reconnect-every 300   # conn soak
 | `tests/host/` | Unity C suite + python unit tests for the host tools |
 | `tests/hw/` | pyserial/WinRT hardware suites (COM12) |
 | `harness/00-global-context/` | Product spec, coding rules, build env, git workflow |
-| `harness/01-features/` | Per-feature specs incl. `stage5-host/` (H5.1–H5.3 + overview README) |
+| `harness/01-features/` | Per-feature specs incl. `stage5-host/` (H5.1–H5.3) and `stage6-agent/` (H6.1 tool registry M1–M4) |
 | `harness/02-knowledge/` | Process reports + run-transcript evidence (the WHY behind commits) |
 | `bug_check/README.md` | Consolidated bug tracking |
 | `status/LATEST.md` | Latest status snapshot + pointer |

@@ -90,7 +90,7 @@ branch); recorded here so the index stays complete:
 
 | Branch | Cut from | State |
 |---|---|---|
-| `Lua_tool_extension_dev` | master @ `c9665a7` (2026-09-03) | **H6.1 Lua Tool Registry M1 implemented + live-verified** (pack convention, demo pack, assistant generate-and-execute; unit 79/79) — unmerged, review pending; spec `harness/01-features/stage6-agent/` |
+| `Lua_tool_extension_dev` | master @ `d0b73a3` (2026-09-07) | **H6.1 Lua Tool Registry M1–M4 implemented + live-verified** (pack convention + generate-and-execute; LittleFS pack persistence + boot autorun; `hw.*` device API incl. kv configure mode + chunked exec + mutating gate; native function-calling option) — Unity 147, python 144/35/10, hw 13/13 + 18/18 + gate 6/6 — unmerged, review pending; spec `harness/01-features/stage6-agent/` |
 | `ble_connected` | pre-F2.4-merge | historical implementation line; content superseded by the merged F2.4 |
 | `docs/stage5-refresh` | pre-`d090091` | merged via squash `d090091`; kept per policy |
 

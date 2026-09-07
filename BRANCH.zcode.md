@@ -1,10 +1,14 @@
-# BRANCH — H6.1 Lua Tool Registry, M1 (host-only)
+# BRANCH — H6.1 Lua Tool Registry, M1–M4
 
-> **Author:** zcode · 2026-09-03
+> **Author:** zcode · 2026-09-03 (M2–M4 completed 2026-09-07)
 
 - **Branch:** `Lua_tool_extension_dev`
-- **Feature:** H6.1 M1 — Lua tool packs (the `manifest()` convention) +
-  assistant generate-and-execute support; zero firmware changes
+- **Feature:** H6.1 — Lua tool packs (`manifest()` convention) +
+  assistant generate-and-execute, across all four roadmap milestones:
+  M1 host-only loop · M2 pack persistence + boot autorun · M3 `hw.*`
+  device bindings + kv configure-mode + chunked exec + mutating gate ·
+  M4 native function-calling option. GATT exposure and hook chaining
+  remain parked M4 options by design.
 - **Baseline:** master @ `c9665a7` (2026-09-03) — the docs commit landing
   the converged proposal; the branch was originally cut at `e287261` and
   fast-forwarded to `c9665a7` before its first commit so the spec can
@@ -68,6 +72,28 @@ ALL DONE 2026-09-03 — see the process report
   collision/duplicate before-send, manifest assembly, arg/format helpers,
   `exec_tool_program`, validation edges); fixed the `PACK` test fixture to
   follow the demo.lua line convention. Unit 108/108.
+- 2026-09-07 **M2** `70e4ed0` (rebased onto advanced master): firmware
+  `pack_store` (`/littlefs/packs/`, bridge-parity scan, `PACK`
+  CLI family, boot autorun — decision 13's seam honored), storage
+  `list_dir`; host `/tools persist [autorun]`, `/tools load @name`,
+  device-pack listing. Unity pack suite 12/0 (contract 87); hw
+  `test_pack_hw.py` 13/13 incl. THE M2 PROOF (reboot → autorun →
+  manifest alive with no host load); gate 6/6; live persist→@demo
+  (evidence 05-07)
+- 2026-09-07 **M3** `68dd403`: `hw.*` device bindings behind
+  CONFIG_LUA_HW_BINDINGS (millis/gpio whitelist/adc/kv — decision 14's
+  configure mode made real), LUA BEGIN/END chunk exec (locals persist),
+  host chunk path + `--mutating-gate` (decision 10's M3 return);
+  hwio.lua 6-tool pack. Unity chunk suite 8/0 (147 total); hw
+  `test_hwio_hw.py` 18/18 incl. THE CONFIGURE PROOF (kv survives
+  reboot, raw binding AND tool level); gate 6/6; live hw composition +
+  gate declined/confirmed (evidence 08-11). Two live-caught fixes:
+  GPIO INPUT_OUTPUT read-back; session-vs-parameters after reboot
+- 2026-09-07 **M4** `adbd69f`: `--native-tools` — registry as an
+  OpenAI tools array, tool_calls through the same device path, tool
+  results back as role:tool messages, cap + gate apply; python 144/144;
+  LIVE on qwen3.8-27b: native tool_calls executed + answered (evidence
+  12). GATT exposure + hook chaining remain parked M4 options by design
 
 ## Merge record (filled at merge time)
 - squash commit: \<sha\> on master

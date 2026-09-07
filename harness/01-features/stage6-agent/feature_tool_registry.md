@@ -11,7 +11,7 @@
 | Source Files | `host_app/assistant.py`, `host_app/tool_packs/demo.lua` |
 | Test Files   | `tests/host/test_assistant.py`; live sessions in `harness/02-knowledge/` |
 | Origin       | Proposal `docs/feature-proposal-lua-tool-registry-2026-08-29.zcode.md` (decisions 1–14, incl. the deepseek addendum) |
-| Status       | Implemented 2026-09-03 (M1), branch `Lua_tool_extension_dev` — unit 79/79 + live evidence `harness/02-knowledge/evidence-tool-registry-2026-09-03/`; unmerged, review pending |
+| Status       | Implemented 2026-09-03→07 (M1–M4), branch `Lua_tool_extension_dev` — Unity 147, python 144/35/10, hw 13/13 + 18/18 + gate 6/6, live evidence `harness/02-knowledge/evidence-tool-registry-2026-09-03/`; unmerged, review pending |
 
 ## Functional Description
 
@@ -137,10 +137,45 @@ old behavior (deploy offer) is unchanged.
 - Manifest fetch assumes `string.sub` slicing (chunk 180 B: 256 B result
   buffer / 512 B TX budget with JSON escaping).
 
-## Future Extensions (M2+, from the proposal)
+## Milestones M2–M4 (implemented 2026-09-07)
 
-Firmware `TOOLS LIST`/multi-pack LittleFS storage + boot-time `autorun`
-honoring (M2); `hw.*` bindings incl. a device-owned key-value store for
-`configure`-mode persistence, wall-clock budgets, optional mutating-only
-host gate (M3); native function-calling, GATT exposure, hook chaining
-(M4).
+- **M2 — pack persistence + boot autorun.** Firmware `pack_store`
+  component: named packs under `/littlefs/packs/<name>.lua` with
+  `<name>.autorun` markers; `PACK LIST|BEGIN <name> [autorun]|END|RUN
+  <name>|DEL <name>|AUTORUN <name> ON|OFF` CLI family (upload mirrors
+  the F4.2 bridge: silent acks, bridge-parity fail-closed scan,
+  compile-check, -612 mid-upload); storage is INERT until `PACK RUN` or
+  boot autorun (persist ≠ execute — decision 14's run/resident split);
+  packs live outside the CLI state machine (decision 11). Host:
+  `/tools persist <name> [autorun]`, `/tools load @<name>` (the
+  different-PC flow), device-pack listing. Hw proof: reboot → autorun →
+  `manifest()` alive with no host load (`tests/hw/test_pack_hw.py`
+  13/13).
+- **M3 — the device API + long programs + the gate.**
+  `hw.*` bindings behind `CONFIG_LUA_HW_BINDINGS` (default on): millis,
+  gpio_write/gpio_read (whitelist 1-18/21-25/38-48; USB/flash/PSRAM
+  pins excluded; INPUT_OUTPUT for read-back), adc_read (ADC1 gpio
+  1..10), `kv_set`/`kv_get` — a device-owned store under
+  `/littlefs/kv`: decision 14's configure mode made real (the EFFECT
+  survives power cycles; proven on hw). `LUA BEGIN … LUA END` chunk
+  upload executes a longer program as ONE chunk (locals persist;
+  bridge-parity scan; 4 KB cap). Host: multi-line tool programs take
+  the chunk path; `--mutating-gate` (decision 10's M3 return) confirms
+  programs calling manifest-declared mutating tools — declining feeds
+  the LLM a corrective message without consuming the budget. Pack:
+  `host_app/tool_packs/hwio.lua` (6 tools, 2 mutating; degrades to
+  error strings when the flag is off). Hw: `tests/hw/test_hwio_hw.py`
+  18/18.
+- **M4 — native function-calling (option).** `--native-tools`: the
+  registry is sent as an OpenAI `tools` array (manifest args → JSON
+  schema, enums carried); `tool_calls` execute through the same device
+  path (one program per call); results return as `role:"tool"`
+  messages; the cap answers overflow calls with synthetic skipped
+  results; the mutating gate applies. Verified live on qwen3.8-27b
+  (evidence 12).
+
+## Deliberately not built (parked M4 options, per the proposal)
+
+GATT-plane tool exposure; hook chaining across scripts; per-tool
+wall-clock budgets beyond the existing instruction cap (pure-Lua tools
+have never needed them — revisit when a hardware tool blocks).

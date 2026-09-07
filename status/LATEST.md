@@ -1,6 +1,6 @@
 # LATEST — Status Pointer
 
-**Current status:** [`status-2026-09-03-tool-registry.zcode.md`](status-2026-09-03-tool-registry.zcode.md) — H6.1 M1 Lua Tool Registry implemented + live-verified on branch `Lua_tool_extension_dev` (unmerged, review pending); stage 5 remains the last merge on master
+**Current status:** [`status-2026-09-07-tool-registry-m2-m4.zcode.md`](status-2026-09-07-tool-registry-m2-m4.zcode.md) — H6.1 Lua Tool Registry **M1–M4 complete** on branch `Lua_tool_extension_dev` (pack persistence + boot autorun, hw.* device API + kv configure mode, chunked exec, mutating gate, native function-calling; unmerged, review pending); stage 5 remains the last merge on master
 
 
 ## At a glance
