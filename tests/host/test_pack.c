@@ -132,7 +132,7 @@ static void test_compile_error_surfaces_in_end(void)
     TEST_ASSERT_EQUAL_INT(0, run("return +++"));
     TEST_ASSERT_EQUAL_INT(0, run("PACK END"));
     TEST_ASSERT_TRUE(strstr(resp, "\"code\":-612") != NULL);
-    TEST_ASSERT_TRUE(strstr(resp, "stub compile error") != NULL);
+    TEST_ASSERT_TRUE(strstr(resp, "unexpected symbol") != NULL);
     TEST_ASSERT_NULL(stub_fs_get("/littlefs/packs/demo.lua", NULL));
 }
 

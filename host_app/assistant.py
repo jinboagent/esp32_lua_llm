@@ -107,6 +107,7 @@ MANIFEST_CHUNK = 180      # string.sub slice/fetch: 256 B result, 512 B TX
 MANIFEST_MAX = 8192       # hard cap on one manifest string
 MANIFEST_VERSION = 1
 TOOL_EXEC_CAP = 3         # consecutive tool-program executions per turn
+NATIVE_MAX_ROUNDS = 8     # hard cap on native tool-call LLM rounds per turn
 TOOL_PROGRAM_MAX_LINES = 12
 ARG_TYPES = ("string", "number", "boolean", "table")
 FORBIDDEN_DOTTED = ("os.", "io.", "debug.", "package.")
@@ -1225,8 +1226,12 @@ class Session:
                      f"tools - {self.buf.counts()})")
         self.history.add("user", "Device data snapshot attached. " + user_text)
         executed = 0
-        capped = False
+        rounds = 0
         while True:
+            rounds += 1
+            if rounds > NATIVE_MAX_ROUNDS:
+                self.tee.say("(native tool loop stopped: too many rounds)")
+                return
             try:
                 msg = chat_native(self.cfg, messages, arr,
                                   self.tee.say)["choices"][0]["message"]
@@ -1241,41 +1246,36 @@ class Session:
                 self.tee.say("llm: " + text)
                 self.history.add("assistant", text[:400])
                 return
-            if executed >= TOOL_EXEC_CAP or capped:
-                capped = True
-                if executed >= TOOL_EXEC_CAP:
-                    self.tee.say(f"(native tool cap reached "
-                                 f"({TOOL_EXEC_CAP}/turn))")
-                messages.append({"role": "assistant",
-                                 "content": msg.get("content") or "",
-                                 "tool_calls": calls})
-                for c in calls:
-                    messages.append({"role": "tool",
-                                     "tool_call_id": c["id"],
-                                     "content": "skipped: the execution "
-                                                "budget for this turn is "
-                                                "exhausted; answer now."})
-                continue
             messages.append({"role": "assistant",
                              "content": msg.get("content") or "",
                              "tool_calls": calls})
             for c in calls:
-                fname = c.get("function", {}).get("name", "?")
+                cid = c.get("id")
+                # B4: enforce the cap per-call — a single message can carry
+                # more parallel tool_calls than TOOL_EXEC_CAP.
+                if executed >= TOOL_EXEC_CAP:
+                    messages.append({"role": "tool",
+                                     "tool_call_id": cid,
+                                     "content": "skipped: the execution "
+                                                "budget for this turn is "
+                                                "exhausted; answer now."})
+                    continue
+                func = c.get("function") or {}
+                fname = func.get("name", "?")
                 try:
-                    args = json.loads(
-                        c["function"].get("arguments") or "{}")
+                    args = json.loads(func.get("arguments") or "{}")
                 except (json.JSONDecodeError, ValueError):
                     args = None
                 if not isinstance(args, dict):
                     messages.append({"role": "tool",
-                                     "tool_call_id": c["id"],
+                                     "tool_call_id": cid,
                                      "content": "bad arguments JSON"})
                     continue
                 try:
                     literal = lua_args_literal(args)
                 except ValueError as e:
                     messages.append({"role": "tool",
-                                     "tool_call_id": c["id"],
+                                     "tool_call_id": cid,
                                      "content": f"bad args: {e}"})
                     continue
                 code = f"return {fname}({literal})"
@@ -1287,7 +1287,7 @@ class Session:
                                                                     "yes"):
                         self.tee.say("(declined - nothing was executed)")
                         messages.append({"role": "tool",
-                                         "tool_call_id": c["id"],
+                                         "tool_call_id": cid,
                                          "content": "declined by the user"})
                         continue
                     self.tee.say(f"  confirm> {line}")
@@ -1301,8 +1301,18 @@ class Session:
                 self.history.add("user",
                                  f"TOOL {fname}: {str(result)[:150]}")
                 messages.append({"role": "tool",
-                                 "tool_call_id": c["id"],
+                                 "tool_call_id": cid,
                                  "content": str(result)})
+            if executed >= TOOL_EXEC_CAP:
+                # B4: budget spent — steer the model to a final answer; the
+                # round cap above is the hard backstop if it keeps calling.
+                self.tee.say(f"(native tool cap reached "
+                             f"({TOOL_EXEC_CAP}/turn))")
+                messages.append({"role": "user",
+                                 "content": "Execution budget for this turn "
+                                            "is used up. Give your final "
+                                            "answer now (plain text), do not "
+                                            "call more tools."})
 
     def chat_envelope(self, messages):
         """One LLM round trip with the Rec1 ladder (401 self-heal, then
@@ -1745,20 +1755,25 @@ class Session:
         # AC#2: validate the manifest and reject name collisions HOST-SIDE,
         # before any device line is sent (a rejected pack must leave no
         # side effects on the device - e.g. an on_adv the device keeps).
+        # Fail-closed: if the manifest cannot be reconstructed host-side we
+        # cannot honour AC#2, so refuse the pack rather than skip validation.
         mtext, asm_err = assemble_manifest_from_source(src)
-        if asm_err is None:
-            m, verr = validate_manifest(mtext)
-            if verr:
-                self.tee.say("(manifest rejected: " + verr + ")")
-                return
-            if any(p["name"] == m["name"] for p in self.tools.packs):
-                self.tee.say(f"(pack '{m['name']}' is already registered)")
-                return
-            clash = {t["name"] for t in m["tools"]} & self.tools.tool_names()
-            if clash:
-                self.tee.say("(name collision with an active pack: "
-                             + ", ".join(sorted(clash)) + ")")
-                return
+        if asm_err is not None:
+            self.tee.say("(cannot pre-validate the pack manifest host-side: "
+                         + asm_err + " - pack NOT registered)")
+            return
+        m, verr = validate_manifest(mtext)
+        if verr:
+            self.tee.say("(manifest rejected: " + verr + ")")
+            return
+        if any(p["name"] == m["name"] for p in self.tools.packs):
+            self.tee.say(f"(pack '{m['name']}' is already registered)")
+            return
+        clash = {t["name"] for t in m["tools"]} & self.tools.tool_names()
+        if clash:
+            self.tee.say("(name collision with an active pack: "
+                         + ", ".join(sorted(clash)) + ")")
+            return
         # registration is the privileged act (decision 4): confirm-gated
         self.tee.say(f"register pack {path} ({len(lines)} LUA EXEC lines, "
                      "run mode - RAM only, nothing persisted)? [y/N]")

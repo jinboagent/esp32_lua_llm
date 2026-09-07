@@ -200,7 +200,11 @@ int  lua_engine_compile_check(const char *script, char *err, uint16_t err_len)
 {
     (void)script;
     if (stub_lua_compile_ret != 0 && err != NULL && err_len > 0)
-        snprintf(err, err_len, "stub compile error near 'X'");
+        /* audit B1: carry double quotes, like a real luaL_loadstring error
+         * ('[string "pack"]:1: ...'), so the response-contract test pins the
+         * json_escape_str fix on the PACK END error path. */
+        snprintf(err, err_len,
+                 "[string \"pack\"]:1: unexpected symbol near 'X'");
     return stub_lua_compile_ret;
 }
 int  lua_engine_exec(const char *script, char *result, uint16_t result_len)

@@ -221,6 +221,20 @@ static void test_pack_family_all_valid(void)
     expect("PACK DEL demo", 0, "\"code\":-706");
 }
 
+static void test_pack_end_compile_error_is_valid_json(void)
+{
+    /* audit B1: a pack compile error carries double quotes ('[string
+     * "pack"]:1: ...'); the PACK END error response must still be strict
+     * JSON (json_escape_str - the eval-2026-08-11 H1 class, reintroduced
+     * on the pack path). */
+    char r2[256];
+    stub_lua_compile_ret = -612;
+    expect("PACK BEGIN demo", 0, "\"cmd\":\"pack_begin\"");
+    TEST_ASSERT_EQUAL_INT(0,
+        cli_process_command("return +++", r2, sizeof(r2)));
+    expect("PACK END", 0, "\"code\":-612");
+}
+
 /* ---- Entry point --------------------------------------------------------- */
 
 int test_cli_responses_main(void)
@@ -239,6 +253,7 @@ int test_cli_responses_main(void)
     fresh(); RUN_TEST(test_script_running_blocks_conn_all_valid);
     fresh(); RUN_TEST(test_status_in_every_state);
     fresh(); RUN_TEST(test_pack_family_all_valid);
+    fresh(); RUN_TEST(test_pack_end_compile_error_is_valid_json);
 
     printf("  (response contract: %d responses strictly validated)\n",
            n_checked);

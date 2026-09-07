@@ -811,9 +811,14 @@ static int h_pack(const char *action, char *response, uint16_t response_len)
                 "{\"status\":\"ok\",\"cmd\":\"pack_end\",\"size\":%lu}",
                 (unsigned long)size);
         } else {
+            /* H1-class fix: a pack compile error (luaL_loadstring) carries
+             * quotes/control chars ('[string "pack"]:1: ...'); escape it so
+             * the response stays strict JSON (eval-2026-08-11 H1, audit B1). */
+            char err_esc[sizeof(err) * 2];
+            json_escape_str(err, err_esc, sizeof(err_esc));
             CLI_EMIT(response, response_len,
                 "{\"status\":\"error\",\"cmd\":\"pack_end\","
-                "\"code\":%d,\"msg\":\"%s\"}", ret, err);
+                "\"code\":%d,\"msg\":\"%s\"}", ret, err_esc);
         }
         return 0;
     }

@@ -1272,7 +1272,8 @@ class AssembleManifestSourceTests(unittest.TestCase):
 
     def test_multiline_string_falls_back(self):
         # a pack that spans [[...]] across lines (the loose form) is not
-        # reconstructible here - returns None so the caller falls back
+        # reconstructible here; the caller rejects it fail-closed (B2),
+        # never silently skipping the pre-send validation
         text, err = assistant.assemble_manifest_from_source("\n".join([
             'M = [[{"version":1,"name":"x","tools":[{"name":"a","doc":"d"}]',
             '}]]',
@@ -1358,6 +1359,24 @@ class ToolsCommandEdgeTests(unittest.TestCase):
         sess.do_tools_refresh()
         self.assertIn("not in the registry",
                       str(sess.tee.say.call_args_list))
+
+    def test_load_rejects_when_manifest_unparseable(self):
+        # B2: a pack whose manifest can't be reconstructed host-side must be
+        # rejected fail-closed (AC#2), not silently loaded unvalidated.
+        import tempfile
+        src = ('M = \'{"version":1,"name":"x","tools":[]}\'\n'
+               'function manifest() return M end\n')
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False,
+                                         encoding="utf-8") as f:
+            f.write(src)
+            path = f.name
+        self.addCleanup(os.unlink, path)
+        sim = unittest.mock.Mock()
+        sess = self._sess(sim)
+        sess.do_tools_load(path)
+        self.assertIn("pack NOT registered",
+                      str(sess.tee.say.call_args_list))
+        self.assertFalse(sim.write.called)   # nothing sent to the device
 
 
 class ArgSigTests(unittest.TestCase):
@@ -1920,6 +1939,43 @@ class NativeToolsTests(unittest.TestCase):
         # 3 executed results + the synthetic skipped one from the cap
         self.assertEqual(len(tool_msgs), 4)
         self.assertIn("skipped", tool_msgs[-1]["content"])
+
+    def test_native_parallel_calls_capped_per_call(self):
+        # B4: one message carrying 5 parallel tool_calls executes only
+        # TOOL_EXEC_CAP of them; the rest are skipped, not executed.
+        sim = ExecToolProgramTests.ListSerial(
+            [ExecToolProgramTests.lua_ok("1")] * 3)
+        self.sess.s = sim
+        calls = [self.call("c%d" % i, "mean", '{"numbers": [%d]}' % i)
+                 for i in range(5)]
+        replies = [self.msg(calls), self.msg(content="done")]
+        it = iter(replies)
+        with unittest.mock.patch.object(
+                assistant, "chat_native",
+                side_effect=lambda *a, **k: next(it)) as chat:
+            self.sess.ask_llm("mean everything")
+        self.assertEqual(len(sim.written), 3)   # cap enforced per call
+        self.assertIn("native tool cap reached (3/turn)", self.said())
+        second = chat.call_args_list[1].args[1]
+        skipped = [m for m in second if m.get("role") == "tool"
+                   and "skipped" in m["content"]]
+        self.assertEqual(len(skipped), 2)
+
+    def test_missing_tool_call_id_does_not_crash(self):
+        # B8: a provider omitting tool_call ids must not KeyError the session.
+        sim = ExecToolProgramTests.ListSerial(
+            [ExecToolProgramTests.lua_ok("6.00")])
+        self.sess.s = sim
+        no_id = {"type": "function",
+                 "function": {"name": "mean", "arguments": '{"numbers":[3]}'}}
+        replies = [self.msg([no_id]), self.msg(content="ok")]
+        it = iter(replies)
+        with unittest.mock.patch.object(
+                assistant, "chat_native",
+                side_effect=lambda *a, **k: next(it)):
+            self.sess.ask_llm("mean of 3?")
+        sent = [w.decode().strip() for w in sim.written]
+        self.assertIn("LUA EXEC return mean({numbers={3}})", sent)
 
 
 if __name__ == "__main__":
