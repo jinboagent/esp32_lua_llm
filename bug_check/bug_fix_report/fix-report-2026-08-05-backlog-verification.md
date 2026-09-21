@@ -2,7 +2,7 @@
 
 ## Source
 
-Tracker: `bug_check/stage-all-eval-2026-08-04.md` (listed "剩余 28 个" / 28 remaining)
+Tracker: `bug_check/stage-all-eval-2026-08-04.md` (listed "28 items remaining" / 28 remaining)
 Verified against: firmware v1.0.0, HEAD `d94e413` (= origin/master)
 
 ## Outcome: zero genuine remainders — no code changes needed

@@ -78,7 +78,7 @@ Plus **5 additional bugs found during this review** (not in the eval) — all fi
 
 | ID | Reason |
 |----|--------|
-| L3 | Not a bug: TinyUSB/USB-Serial-JTAG console is initialized by ESP-IDF startup code before `app_main` (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`, `CONFIG_TINYUSB_CDC_ENABLED=y` in sdkconfig.defaults). The eval's own note "(fcntl 足够)" agrees. |
+| L3 | Not a bug: TinyUSB/USB-Serial-JTAG console is initialized by ESP-IDF startup code before `app_main` (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`, `CONFIG_TINYUSB_CDC_ENABLED=y` in sdkconfig.defaults). The eval's own note "(fcntl is sufficient)" agrees. |
 | M-S2-2 (as separate from L1) | Same bug as L1 — one fix covers both entries |
 | L-S3-6 diagnosis | Agree there is a bug, disagree with characterization: the else branch was reachable and harmful (see L-S3-6 above) |
 

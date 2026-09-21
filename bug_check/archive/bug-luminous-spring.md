@@ -1,225 +1,225 @@
-# BLE Sniffer Dongle 项目代码评估报告
+# BLE Sniffer Dongle Project Code Evaluation Report
 
-## 上下文
+## Context
 
-ESP32-S3 BLE Sniffer Dongle — 被动扫描 BLE 广播包、解析、过滤、JSON 输出的 USB 加密狗。v1 规划 13 个特性分 4 阶段，当前仅实现 Stage 1 的 3 个纯计算模块（AD 解析器、JSON 编码器、过滤引擎）+ 1 个静态 demo main.c。评估覆盖所有已存在的源代码、接口头文件、测试代码、构建配置和文档。
+ESP32-S3 BLE Sniffer Dongle — a USB dongle that passively scans BLE advertisements, parses, filters, and outputs JSON. The v1 plan schedules 13 features across 4 stages; currently only the 3 Stage 1 pure-computation modules (AD parser, JSON encoder, filter engine) + 1 static demo main.c are implemented. The evaluation covers all existing source code, interface headers, test code, build configuration, and documentation.
 
 ---
 
-## 🔴 严重 Bug
+## 🔴 Critical Bugs
 
-### B1. JSON 编码器 — 栈缓冲区溢出 (`firmware/components/json_enc/json_encoder.c:86`)
+### B1. JSON encoder — stack buffer overflow (`firmware/components/json_enc/json_encoder.c:86`)
 
 ```c
-char escaped_name[PROTO_DEVICE_NAME_MAX_LEN * 2];  // = 64 字节
+char escaped_name[PROTO_DEVICE_NAME_MAX_LEN * 2];  // = 64 bytes
 s_encode_string_escaped(escaped_name, sizeof(escaped_name), report->name);
 ```
 
-- `s_encode_string_escaped` 对 `< 0x20` 的控制字符输出 `\uXXXX`（6 字节）
-- BLE 设备名最长 31 字符，最坏情况: 31 × 6 + 1 = **187 字节** > 64 字节缓冲区
-- 恶意/损坏的 BLE 设备在 AD name 中嵌入控制字符即可触发栈溢出
-- **这是一个可被外部 BLE 无线电信号远程触发的漏洞**
-- 修复：`escaped_name` 应调整为 `PROTO_DEVICE_NAME_MAX_LEN * 6` (192 字节)
+- `s_encode_string_escaped` emits `\uXXXX` (6 bytes) for control characters `< 0x20`
+- BLE device names are at most 31 characters; worst case: 31 × 6 + 1 = **187 bytes** > the 64-byte buffer
+- A malicious/corrupted BLE device can trigger the stack overflow simply by embedding control characters in the AD name
+- **This is a vulnerability remotely triggerable by external BLE radio signals**
+- Fix: `escaped_name` should be sized `PROTO_DEVICE_NAME_MAX_LEN * 6` (192 bytes)
 
-### B2. 过滤引擎 — 通配符递归 DoS (`firmware/components/filter/filter_engine.c:60-86`)
+### B2. Filter engine — recursive wildcard DoS (`firmware/components/filter/filter_engine.c:60-86`)
 
-- `s_wildcard_match` 使用递归实现，对 `*a*a*a*...*` 模式呈 O(2^n) 指数复杂度
-- 攻击者通过 CLI 注入含 15 个 `*` 的过滤规则(max 31 字符)，配合 31 字符设备名
-- 可阻塞 pipeline 任务超过 5 秒看门狗超时，导致系统复位
-- 修复：在嵌入式场景下改用非递归实现
+- `s_wildcard_match` uses a recursive implementation, with O(2^n) exponential complexity on `*a*a*a*...*` patterns
+- An attacker injects via CLI a filter rule containing 15 `*`s (max 31 chars), paired with a 31-character device name
+- This can block the pipeline task past the 5-second watchdog timeout, causing a system reset
+- Fix: switch to a non-recursive implementation for the embedded setting
 
-### B3. 分区表缺少 LittleFS 分区 (`partitions.csv`)
+### B3. Partition table missing the LittleFS partition (`partitions.csv`)
 
-- 分区表只有 nvs/phy_init/factory，**没有任何 LittleFS/storage 分区**
-- 这直接阻塞了: Lua 脚本存储 (F0.2)、Lua 引擎 (F3.1)、脚本管理 (F3.2)、CLI SCRIPT 命令 (F4.1)、LLM bridge (F4.2)
-- `feature_littlefs_storage.md` 定义了 64KB LittleFS 分区，但分区表完全没有对应条目
+- The partition table has only nvs/phy_init/factory, **no LittleFS/storage partition at all**
+- This directly blocks: Lua script storage (F0.2), Lua engine (F3.1), script management (F3.2), the CLI SCRIPT command (F4.1), the LLM bridge (F4.2)
+- `feature_littlefs_storage.md` defines a 64KB LittleFS partition, but the partition table has no corresponding entry
 
-### B4. sdkconfig.defaults 缺失关键配置
+### B4. sdkconfig.defaults missing key configuration
 
-| 缺失项 | 影响 |
+| Missing item | Impact |
 |--------|------|
-| NimBLE (`CONFIG_BT_ENABLED`, `CONFIG_BT_NIMBLE_ENABLED`, `CONFIG_BT_NIMBLE_ROLE_OBSERVER`, `CONFIG_BT_NIMBLE_MEM_POOL_SIZE=70`) | BLE 无法初始化 |
-| LittleFS (`CONFIG_LITTLEFS_ENABLED`) | 脚本存储不可用 |
-| `CONFIG_WIFI_ENABLED=n` | 默认启用 WiFi，浪费 ~20KB RAM |
-| `CONFIG_FREERTOS_SMP=n` | 双核 SMP 未按规范禁用 |
-| CPU 频率 = 160MHz（规范要求 240MHz） | 吞吐量降低 |
+| NimBLE (`CONFIG_BT_ENABLED`, `CONFIG_BT_NIMBLE_ENABLED`, `CONFIG_BT_NIMBLE_ROLE_OBSERVER`, `CONFIG_BT_NIMBLE_MEM_POOL_SIZE=70`) | BLE cannot initialize |
+| LittleFS (`CONFIG_LITTLEFS_ENABLED`) | Script storage unavailable |
+| `CONFIG_WIFI_ENABLED=n` | WiFi enabled by default, wasting ~20KB RAM |
+| `CONFIG_FREERTOS_SMP=n` | Dual-core SMP not disabled as the spec requires |
+| CPU frequency = 160MHz (spec requires 240MHz) | Reduced throughput |
 
 ---
 
-## 🟠 中等严重度
+## 🟠 Medium Severity
 
-### M1. UUID32/UUID128 解析缺失 (`proto_adv_parse.c`)
+### M1. UUID32/UUID128 parsing missing (`proto_adv_parse.c`)
 
-- `project_overview.md` v1 Scope 明确包含 "UUID16/32/128"
-- `proto_adv_parse.c` 只处理 UUID16（AD types 0x02-0x03）
-- AD types 0x04-0x07 的 `#define` 常量已定义但 switch 语句不处理，落入 `default: break`
-- 属于功能未完成
+- The `project_overview.md` v1 Scope explicitly includes "UUID16/32/128"
+- `proto_adv_parse.c` handles only UUID16 (AD types 0x02-0x03)
+- The `#define` constants for AD types 0x04-0x07 are defined, but the switch statement does not handle them — they fall into `default: break`
+- This is unfinished functionality
 
-### M2. JSON 编码器静默丢弃 `flags` 和 `tx_power` 字段
+### M2. JSON encoder silently drops the `flags` and `tx_power` fields
 
-- 解析器正确填充 `has_flags`/`flags`/`has_tx_power`/`tx_power`
-- 编码器从未输出这两个字段到 JSON
-- 既非文档声明的限制，也非预期的省略 — 属于数据丢失路径
+- The parser correctly fills in `has_flags`/`flags`/`has_tx_power`/`tx_power`
+- The encoder never emits these two fields to JSON
+- Neither a documented limitation nor an intended omission — this is a data-loss path
 
-### M3. 错误码体系三套并行，互不兼容
+### M3. Three parallel, mutually incompatible error-code schemes
 
-| 来源 | NULL pointer 错误码 | 体系 |
+| Source | NULL pointer error code | Scheme |
 |------|---------------------|------|
-| `coding_rules.md` §1 | `-1` (`ERR_NULL_PTR`) | 全局通用码 |
-| `proto_if.h` | `-102` | 模块范围 (-100~-199) |
-| `filter_if.h` | `-302` | 模块范围 (-300~-399) |
+| `coding_rules.md` §1 | `-1` (`ERR_NULL_PTR`) | global generic codes |
+| `proto_if.h` | `-102` | module range (-100~-199) |
+| `filter_if.h` | `-302` | module range (-300~-399) |
 
-- `filter_get_count` 返回 `-1`（超出 -300~-399 范围）
-- `coding_rules.md` 的通用错误码表在实际代码中**完全未使用**
+- `filter_get_count` returns `-1` (outside the -300~-399 range)
+- The generic error-code table in `coding_rules.md` is **entirely unused** in the actual code
 
-### M4. 解析器/过滤器静默截断，调用者无感知
+### M4. Parser/filter silently truncate, invisible to callers
 
-- `s_parse_uuid16_list`: UUID > 10 个被丢弃，返回 0（成功）
-- `s_parse_manufacturer_data`: 厂家数据 > 31 字节被丢弃，返回 0（成功）
-- `filter_add_rule`: pattern ≥ 32 字符截断为 31，返回 0（成功）
-- 调用者无从判断数据完整性
+- `s_parse_uuid16_list`: UUIDs beyond 10 are dropped, returns 0 (success)
+- `s_parse_manufacturer_data`: manufacturer data beyond 31 bytes is dropped, returns 0 (success)
+- `filter_add_rule`: patterns ≥ 32 characters are truncated to 31, returns 0 (success)
+- Callers have no way to judge data integrity
 
-### M5. `filter_evaluate(NULL, ...)` 返回 `true`（放行）
+### M5. `filter_evaluate(NULL, ...)` returns `true` (allows through)
 
-- 程序员忘记 `filter_init` → 所有数据**静默绕过过滤**，不崩溃不报错
-- 其他 filter 函数对 NULL 返回错误码，唯独 `filter_evaluate` 不一致
-- 应返回 `false`（拦截）或使用 assert
+- If the programmer forgets `filter_init` → all data **silently bypasses filtering**, with no crash and no error
+- The other filter functions return error codes for NULL; only `filter_evaluate` is inconsistent
+- It should return `false` (block) or use an assert
 
-### M6. 命名规范多处违规
+### M6. Naming conventions violated in multiple places
 
-- **枚举类型**应以 `_e` 结尾: `proto_addr_type_t` → 应为 `proto_addr_type_e`; `filter_type_t` → 应为 `filter_type_e`
-- **静态函数**应加模块前缀: `s_parse_name` → 应为 `s_proto_parse_name`; `s_match_name` → 应为 `s_filter_match_name`; `s_encode_mac` → 应为 `s_json_encode_mac`
-- `main.c` 使用 `printf` 而非规范要求的 `ESP_LOG*` 宏
+- **Enum types** should end with `_e`: `proto_addr_type_t` → should be `proto_addr_type_e`; `filter_type_t` → should be `filter_type_e`
+- **Static functions** should carry a module prefix: `s_parse_name` → should be `s_proto_parse_name`; `s_match_name` → should be `s_filter_match_name`; `s_encode_mac` → should be `s_json_encode_mac`
+- `main.c` uses `printf` instead of the `ESP_LOG*` macros required by the conventions
 
-### M7. `filter_clear` 与 `filter_init` 不一致
+### M7. `filter_clear` inconsistent with `filter_init`
 
-- `filter_init` 做 `memset(eng, 0, sizeof(filter_engine_t))`（全清零）
-- `filter_clear` 只清零 `rules[]` 和 `rule_count`（部分清零）
-- 当前等效，但若将来 `filter_engine_t` 新增字段（如 `bool enabled`），`filter_clear` 会漏掉
+- `filter_init` does `memset(eng, 0, sizeof(filter_engine_t))` (clears everything)
+- `filter_clear` clears only `rules[]` and `rule_count` (partial clear)
+- Currently equivalent, but if `filter_engine_t` gains a new field later (e.g. `bool enabled`), `filter_clear` will miss it
 
-### M8. `filter_rule_t.active` 字段无公开 API
+### M8. `filter_rule_t.active` field has no public API
 
-- 结构体有 `active` 字段，`s_evaluate_type` 也检查它
-- 但没有 `filter_remove_rule()` 或 `filter_set_active()` API
-- 该字段永远是 `true`（刚添加时设置），属于**无效接口表面积**
+- The struct has an `active` field, and `s_evaluate_type` checks it
+- But there is no `filter_remove_rule()` or `filter_set_active()` API
+- The field is always `true` (set right when added) — **dead interface surface**
 
-### M9. 接口头文件缺少 `extern "C"` 保护
+### M9. Interface headers lack `extern "C"` guards
 
-- `proto_if.h`、`filter_if.h`、`json_if.h` 都没有 `#ifdef __cplusplus / extern "C" {` 块
-- 项目宣称"host-testable"，若将来用 C++ 测试框架会链接失败
+- `proto_if.h`, `filter_if.h`, and `json_if.h` all lack `#ifdef __cplusplus / extern "C" {` blocks
+- The project claims to be "host-testable"; if a C++ test framework is used later, linking will fail
 
-### M10. `test_main.c` 永远返回 0
+### M10. `test_main.c` always returns 0
 
-- `main()` 执行 `UNITY_END()` 后无条件 `return 0`，丢弃 Unity 的失败计数
-- CI 环境无法通过退出码检测测试失败
+- `main()` unconditionally does `return 0` after executing `UNITY_END()`, discarding Unity's failure count
+- CI cannot detect test failures via the exit code
 
-### M11. 仅 3/13 特性有实现代码
+### M11. Only 3/13 features have implementation code
 
-- 已实现: proto_adv_parse、filter_engine、json_encoder（均为纯计算模块）
-- 以下特性**完全没有源文件**: BLE 扫描、NimBLE 初始化、Pipeline、Lua 引擎、脚本管理、CLI 命令、LLM Bridge、电源管理、USB CDC 控制台、LittleFS 存储
+- Implemented: proto_adv_parse, filter_engine, json_encoder (all pure-computation modules)
+- The following features have **no source files at all**: BLE scan, NimBLE init, pipeline, Lua engine, script management, CLI commands, LLM bridge, power management, USB CDC console, LittleFS storage
 
-### M12. `coding_rules.md` 文档多处过期
+### M12. `coding_rules.md` documentation outdated in multiple places
 
-| 过期内容 | 实际状态 |
+| Outdated content | Actual state |
 |----------|----------|
-| `proto_adv_report_t` 定义（含 `adv_data[62]`） | 实际结构体有已解析字段 |
-| 过滤类型含 "manufacturer ID, AD type" | 只实现了 NAME/UUID/RSSI/MAC |
-| BLE ADV raw buffer 64 字节 | `PROTO_ADV_DATA_MAX_LEN` = 31 |
-| 任务优先级 Pipeline=10, CLI=5 | `feature_scan_pipeline.md` 说 Pipeline=2, USB=1 |
+| `proto_adv_report_t` definition (with `adv_data[62]`) | the actual struct has parsed fields |
+| filter types include "manufacturer ID, AD type" | only NAME/UUID/RSSI/MAC implemented |
+| BLE ADV raw buffer 64 bytes | `PROTO_ADV_DATA_MAX_LEN` = 31 |
+| task priorities Pipeline=10, CLI=5 | `feature_scan_pipeline.md` says Pipeline=2, USB=1 |
 
 ---
 
-## 🟡 低严重度
+## 🟡 Low Severity
 
-### L1. 过滤引擎非线程安全
+### L1. Filter engine not thread-safe
 
-- `filter_add_rule`/`filter_evaluate`/`filter_clear` 读写共享状态，无锁无原子操作
-- 三个 FreeRTOS 任务（BLE callback/pipeline/CLI）可能并发访问
+- `filter_add_rule`/`filter_evaluate`/`filter_clear` read and write shared state, with no locks and no atomics
+- Three FreeRTOS tasks (BLE callback/pipeline/CLI) may access it concurrently
 
-### L2. `s_match_mac` 不验证 pattern 总长度
+### L2. `s_match_mac` does not validate the total pattern length
 
-- 恰好读 17 字符，不检查是否还有额外字符，不检查 pattern 末尾是否为 `\0`
-- `"AA:BB:CC:DD:EE:FF:extra"` 会被当作合法 MAC
+- It reads exactly 17 characters, does not check for extra characters, and does not check whether the pattern ends with `\0`
+- `"AA:BB:CC:DD:EE:FF:extra"` would be accepted as a valid MAC
 
-### L3. hex 解析代码重复
+### L3. Duplicate hex parsing code
 
-- `s_match_uuid` 和 `s_match_mac` 中相同的 hex digit 解析逻辑 copy-paste
-- 应提取为公共 `hex_digit()` 辅助函数
+- Identical hex-digit parsing logic copy-pasted in `s_match_uuid` and `s_match_mac`
+- It should be extracted into a shared `hex_digit()` helper function
 
-### L4. `ts_ms` 使用 `uint32_t` — 约 49.7 天回绕
+### L4. `ts_ms` uses `uint32_t` — wraps around after ~49.7 days
 
-- 设备启动后毫秒数，49.7 天后回绕到 0
-- 长期运行可能时间戳排序错乱
+- Milliseconds since device boot; wraps back to 0 after 49.7 days
+- Long-running operation may see timestamp ordering become garbled
 
-### L5. `manu_id=0` 语义模糊
+### L5. Ambiguous `manu_id=0` semantics
 
-- `has_manu=false` 时 `manu_id` 默认为 0
-- 0x0000 是合法的已分配 Company ID (Ericsson)
-- 调用者忘记检查 `has_manu` 会读到看似有效的数据
+- When `has_manu=false`, `manu_id` defaults to 0
+- 0x0000 is a valid assigned Company ID (Ericsson)
+- A caller who forgets to check `has_manu` will read data that looks valid
 
-### L6. 缺少 `const` 限定符
+### L6. Missing `const` qualifiers
 
-- `s_parse_uuid16_list(data, ...)` 和 `s_parse_manufacturer_data(data, ...)` 的 `data` 参数不修改，应为 `const uint8_t *`
+- The `data` parameters of `s_parse_uuid16_list(data, ...)` and `s_parse_manufacturer_data(data, ...)` are not modified and should be `const uint8_t *`
 
-### L7. 测试辅助函数缺少 `static`
+### L7. Test helper functions missing `static`
 
-- `s_make_report` (test_filter_engine.c) 和 `s_make_basic_report` (test_json_encoder.c) 未声明 `static`，有链接符号冲突风险
+- `s_make_report` (test_filter_engine.c) and `s_make_basic_report` (test_json_encoder.c) are not declared `static`, risking link symbol conflicts
 
-### L8. CMake 使用废弃的 `EXTRA_COMPONENT_DIRS`
+### L8. CMake uses deprecated `EXTRA_COMPONENT_DIRS`
 
-- ESP-IDF v5.x 推荐使用项目根 `components/` 目录
+- ESP-IDF v5.x recommends using the project-root `components/` directory
 
-### L9. 测试断言依赖 `strstr` 而非结构化验证
+### L9. Test assertions rely on `strstr` instead of structured verification
 
-- `strstr(buf, "\"ts\":1000")` 会在 name 字段包含该子串时误判
-- 应使用 JSON 解析器或精确字符串比较
+- `strstr(buf, "\"ts\":1000")` misjudges when the name field contains that substring
+- A JSON parser or exact string comparison should be used instead
 
-### L10. `s_make_report` 中 `strncpy` 无显式 null 终止
+### L10. `strncpy` in `s_make_report` lacks explicit null termination
 
-- `strncpy(r.name, name, PROTO_DEVICE_NAME_MAX_LEN - 1)` 当 name ≥ 31 字符时不会写入 `\0`
-- 当前测试使用短名称，但 helper 本身脆弱
-
----
-
-## 🔵 架构/设计关注点
-
-### A1. BLE 扫描核心逻辑完全未实现
-
-- `main.c` 只是硬编码数据的静态 demo
-- NimBLE 扫描回调、FreeRTOS 队列通信、pipeline 任务调度全部未开始
-- 当前可用的仅在 host 端可独立测试的纯计算模块
-
-### A2. 全部任务固定到 Core 0
-
-- ESP32-S3 双核，Core 1 闲置
-- BLE Host (priority 20) 可能长时间抢占 pipeline (priority 10)
-
-### A3. 缺少 `_Static_assert` 编译期校验
-
-- 结构体变更时无法自动检测 ABI 漂移
-
-### A4. JSON 输出和日志共享 USB CDC 通道但无序列化
-
-- 规范要求 pipeline 序列化，但 `main.c` 使用 `printf` 绕过 pipeline
-- 主机端 JSON Lines 解析器遇到非 JSON 日志行会失败
+- `strncpy(r.name, name, PROTO_DEVICE_NAME_MAX_LEN - 1)` does not write a `\0` when name ≥ 31 characters
+- The current tests use short names, but the helper itself is fragile
 
 ---
 
-## 📊 汇总
+## 🔵 Architecture/Design Concerns
 
-| 严重度 | 数量 | 关键项 |
+### A1. BLE scan core logic entirely unimplemented
+
+- `main.c` is just a static demo running on hardcoded data
+- NimBLE scan callbacks, FreeRTOS queue communication, and pipeline task scheduling have not been started at all
+- What currently works is only the pure-computation modules that can be tested standalone on the host
+
+### A2. All tasks pinned to Core 0
+
+- The ESP32-S3 is dual-core; Core 1 sits idle
+- BLE Host (priority 20) can preempt the pipeline (priority 10) for long stretches
+
+### A3. Missing `_Static_assert` compile-time checks
+
+- Struct changes cannot be automatically checked for ABI drift
+
+### A4. JSON output and logs share the USB CDC channel with no serialization
+
+- The spec requires pipeline serialization, but `main.c` uses `printf` to bypass the pipeline
+- The host-side JSON Lines parser fails when it encounters a non-JSON log line
+
+---
+
+## 📊 Summary
+
+| Severity | Count | Key items |
 |--------|------|--------|
-| 🔴 严重 | 4 | JSON 栈溢出、通配符 DoS、缺少 LittleFS 分区、sdkconfig 缺失 |
-| 🟠 中等 | 12 | UUID32/128 缺失、flags/tx_power 丢弃、错误码混乱、静默截断、NULL 放行、命名违规、`filter_clear` 不一致、`active` 死字段、`extern "C"` 缺失、test_main 退出码、实现覆盖率 3/13、文档过期 |
-| 🟡 低 | 10 | 线程安全、MAC 验证、hex 重复代码、ts_ms 回绕、manu_id 模糊、const 缺失、static 缺失、CMake legacy、strstr 测试、strncpy 终止 |
-| 🔵 架构 | 4 | 核心逻辑未实现、单核调度、无 `_Static_assert`、日志/JSON 混用 |
+| 🔴 Critical | 4 | JSON stack overflow, wildcard DoS, missing LittleFS partition, missing sdkconfig |
+| 🟠 Medium | 12 | missing UUID32/128, dropped flags/tx_power, messy error codes, silent truncation, NULL allow-through, naming violations, `filter_clear` inconsistency, dead `active` field, missing `extern "C"`, test_main exit code, implementation coverage 3/13, outdated docs |
+| 🟡 Low | 10 | thread safety, MAC validation, duplicate hex code, ts_ms wraparound, ambiguous manu_id, missing const, missing static, CMake legacy, strstr tests, strncpy termination |
+| 🔵 Architecture | 4 | core logic unimplemented, single-core scheduling, no `_Static_assert`, mixed logs/JSON |
 
 ---
 
-## 📋 建议修复优先级
+## 📋 Recommended Fix Priorities
 
-1. **立即**: `json_encoder.c` escaped_name 缓冲区溢出、`s_wildcard_match` 非递归化
-2. **尽快**: 补充 `partitions.csv` LittleFS 分区、`sdkconfig.defaults` NimBLE/LittleFS/WiFi/SMP 配置
-3. **本阶段**: 统一错误码体系、补齐命名规范、修正 `test_main.c` 退出码、修复文档过期
-4. **下阶段**: 实现 UUID32/128 解析、补齐 `flags`/`tx_power` JSON 输出、添加线程安全保护
-5. **持续**: 补充测试覆盖（控制字符转义、递归深度、截断边界、NULL filter_evaluate 等）、修正 `strstr` 断言为结构化验证
+1. **Immediate**: the `json_encoder.c` escaped_name buffer overflow, make `s_wildcard_match` non-recursive
+2. **As soon as possible**: add the `partitions.csv` LittleFS partition, and the NimBLE/LittleFS/WiFi/SMP settings in `sdkconfig.defaults`
+3. **This stage**: unify the error-code scheme, complete naming-convention compliance, fix the `test_main.c` exit code, fix the outdated documentation
+4. **Next stage**: implement UUID32/128 parsing, add the `flags`/`tx_power` JSON output, add thread-safety protection
+5. **Ongoing**: add test coverage (control-character escaping, recursion depth, truncation boundaries, NULL filter_evaluate, etc.), change `strstr` assertions to structured verification

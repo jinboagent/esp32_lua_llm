@@ -34,7 +34,7 @@ code and fixes what genuinely remained.
 | L-S4-5 | VERSION 0.3.0 ≠ spec 1.0.0 | `CLI_FW_VERSION "1.0.0"` | `cli_commands.c` |
 | F4.2 gaps | bridge_if.h / lua_llm_bridge.c / text-line protocol / sandbox scan AC#7 / upload interruption AC#4 / 30 s timeout | All implemented: `bridge` component, per-line sandbox scan (`-612`), abort-on-command, `SCRIPT_UPLOAD_TIMEOUT_MS 30000` | commit `3dacab2` |
 | F4.3 gap | power module 0% | Implemented (reduced scope): automatic light sleep when idle, wake-on-USB-command, PM activity lock while scanning, `POWER` CLI commands, current estimates | commit `0b57ad9` |
-| §四 busy-loop claim | pipeline `vTaskDelay(50)` never yields for PM | Blocking delay + tickless idle permits light sleep whenever pipeline stopped (F4.3 design) | `scan_pipeline.c`, sdkconfig |
+| §4 busy-loop claim | pipeline `vTaskDelay(50)` never yields for PM | Blocking delay + tickless idle permits light sleep whenever pipeline stopped (F4.3 design) | `scan_pipeline.c`, sdkconfig |
 
 ## Fixed Now (this pass)
 
@@ -50,11 +50,11 @@ code and fixes what genuinely remained.
 
 ## Deferred (pre-documented, unchanged)
 
-- **USB suspend detection** (F4.3 spec / eval §四): USB-Serial/JTAG exposes no bus-suspend signal on this hardware → deferred to v2, documented in `feature_power_management.md` Implementation Notes.
+- **USB suspend detection** (F4.3 spec / eval §4): USB-Serial/JTAG exposes no bus-suspend signal on this hardware → deferred to v2, documented in `feature_power_management.md` Implementation Notes.
 
 ## Not Applicable
 
-- **`tests/harness/` on-target C harness** (eval §五): this project's established test strategy across all stages is host-side Unity tests (`tests/host`, now 67 tests incl. 15 CLI + 10 bridge) plus Python hardware suites driven over USB (`test_bridge_hw.py` 32 checks, `test_power_hw.py` 14 checks). The on-target harness directory was never adopted; treating its absence as a bug would contradict the stage-0..3 precedent.
+- **`tests/harness/` on-target C harness** (eval §5): this project's established test strategy across all stages is host-side Unity tests (`tests/host`, now 67 tests incl. 15 CLI + 10 bridge) plus Python hardware suites driven over USB (`test_bridge_hw.py` 32 checks, `test_power_hw.py` 14 checks). The on-target harness directory was never adopted; treating its absence as a bug would contradict the stage-0..3 precedent.
 
 ## Test Results
 - Host tests: **67/67 pass** (14 proto + 14 json + 14 filter + 15 cli + 10 bridge)
