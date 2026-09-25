@@ -1,0 +1,18 @@
+menu "BLE Sniffer"
+
+config BLE_CONN_ENABLED
+    bool "Enable optional BLE connection feature (GATT client, F2.4)"
+    default y
+    depends on BT_NIMBLE_ENABLED
+    select BT_NIMBLE_ROLE_CENTRAL
+    help
+        Adds the central-role connection feature: connect to one peer by
+        advertised service UUID (auto-connect) or direct address, subscribe
+        a notify/indicate characteristic (poll fallback), and re-stream the
+        payloads as "src":"conn" JSON lines on the same USB stream.
+
+        Disabled: ble_conn.c is excluded from the build, the CONN commands
+        answer -451, and firmware behavior is byte-identical to the
+        feature-less product.
+
+endmenu

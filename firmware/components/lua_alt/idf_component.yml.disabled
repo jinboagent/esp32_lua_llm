@@ -1,0 +1,16 @@
+# IDF Component Manager Manifest File
+#
+# This manifest is DISABLED by default (.disabled extension) so that default
+# builds never contact the component registry (offline-safe).
+#
+# To activate registry-based Lua:
+#   1. Rename this file: idf_component.yml.disabled -> idf_component.yml
+#   2. Build with: idf.py -D LUA_SOURCE=registry build
+#
+# NOTE: Verify the exact package namespace/name on https://components.espressif.com
+# before first use (search "lua"). Expected: uncleRus/lua.
+# Fallback if the registry package is unavailable — use the git source instead:
+#   lua:
+#     git: https://github.com/UncleRus/esp-idf-lua.git
+dependencies:
+  uncleRus/lua: "*"

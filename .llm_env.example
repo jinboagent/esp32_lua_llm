@@ -1,0 +1,28 @@
+# .llm_env.example — copy to .llm_env and fill in ONE option. Never commit .llm_env.
+#
+# Resolution rule: if your shell exports ANY of LLM_BASE_URL / LLM_API_KEY /
+# OPENAI_API_KEY / LLM_MODEL, the environment wins as a UNIT and this file is
+# ignored. Otherwise this file is used as-is.
+# Self-heals built into all three host tools:
+#   401 (rejected shell key)  -> one announced retry with this file's config
+#   404 on a base ending /api/v1 -> retried once on /compatible-mode/v1
+# QWEN_ENABLE_THINKING=false disables reasoning mode (recommended — thinking
+# models stall for minutes on script-generation prompts).
+
+# ---- Option A: any OpenAI-compatible endpoint ----
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=
+LLM_MODEL=gpt-4o-mini
+
+# ---- Option B: Aliyun DashScope (Qwen) ----
+# The /api/v1 native root self-heals to /compatible-mode/v1 if needed.
+#DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+#DASHSCOPE_API_KEY=
+#QWEN_MODEL=qwen-max
+
+# ---- Option C: token-plan pair (alternative provider slot) ----
+#TOKEN_PLAN_BASE_URL=
+#TOKEN_PLAN_API_KEY=
+
+# Optional, any option:
+#QWEN_ENABLE_THINKING=false

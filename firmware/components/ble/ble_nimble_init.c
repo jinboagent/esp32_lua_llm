@@ -1,0 +1,149 @@
+#include "ble_if.h"
+#include <stdio.h>
+#include "esp_err.h"
+#include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/event_groups.h"
+#include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
+#include "host/ble_hs.h"
+#include "host/ble_gap.h"
+#include "services/gap/ble_svc_gap.h"
+
+/* Required by NimBLE for bonding/storage */
+void ble_store_config_init(void);
+
+#define BLE_SYNC_BIT  BIT0
+
+static bool s_initialized = false;
+static EventGroupHandle_t s_sync_event_group = NULL;
+
+static void s_on_sync(void)
+{
+    if (s_sync_event_group) {
+        xEventGroupSetBits(s_sync_event_group, BLE_SYNC_BIT);
+    }
+}
+
+static void s_on_reset(int reason)
+{
+    printf("BLE: host reset, reason=%d\n", reason);
+}
+
+static void s_host_task(void *param)
+{
+    (void)param;
+    nimble_port_run();
+    nimble_port_freertos_deinit();
+}
+
+int ble_init(void)
+{
+    if (s_initialized) {
+        return -7;
+    }
+
+    /* Initialize NVS — required for PHY calibration data */
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        esp_err_t erase_err = nvs_flash_erase();
+        if (erase_err != ESP_OK) {
+            printf("BLE: NVS erase failed: %s\n", esp_err_to_name(erase_err));
+            return -1;
+        }
+        ret = nvs_flash_init();
+    }
+    if (ret != ESP_OK) {
+        printf("BLE: NVS init failed: %s\n", esp_err_to_name(ret));
+        return -1;
+    }
+
+    /* Initialize NimBLE (includes HCI + controller init internally) */
+    ret = nimble_port_init();
+    if (ret != ESP_OK) {
+        printf("BLE: nimble_port_init failed: %d\n", (int)ret);
+        return -1;
+    }
+
+    /* Create sync event group */
+    s_sync_event_group = xEventGroupCreate();
+    if (s_sync_event_group == NULL) {
+        nimble_port_deinit();
+        return -1;
+    }
+
+    /* Configure host callbacks */
+    ble_hs_cfg.sync_cb = s_on_sync;
+    ble_hs_cfg.reset_cb = s_on_reset;
+
+    /* Set device name */
+    int rc = ble_svc_gap_device_name_set("BLE-Sniffer");
+    if (rc != 0) {
+        printf("BLE: failed to set device name: %d\n", rc);
+    }
+
+    /* Initialize storage config (required by NimBLE host) */
+    ble_store_config_init();
+
+    /* Start NimBLE host task */
+    nimble_port_freertos_init(s_host_task);
+
+    /* Wait for host-controller sync (up to 2 seconds) */
+    EventBits_t bits = xEventGroupWaitBits(
+        s_sync_event_group, BLE_SYNC_BIT,
+        pdTRUE, pdFALSE, pdMS_TO_TICKS(2000));
+
+    if (!(bits & BLE_SYNC_BIT)) {
+        printf("BLE: host sync timeout\n");
+        /* Stop the host, then wait for host task to exit before deinit.
+         * nimble_port_stop() causes nimble_port_run() to return, after which
+         * the host task calls nimble_port_freertos_deinit() and deletes itself.
+         * We must not call nimble_port_deinit() concurrently. (B-S2-1 fix) */
+        nimble_port_stop();
+        vTaskDelay(pdMS_TO_TICKS(200));
+        nimble_port_deinit();
+        vEventGroupDelete(s_sync_event_group);
+        s_sync_event_group = NULL;
+        nvs_flash_deinit();
+        return -5;
+    }
+
+    s_initialized = true;
+    printf("BLE: NimBLE initialized, device name: BLE-Sniffer\n");
+    return 0;
+}
+
+int ble_deinit(void)
+{
+    if (!s_initialized) {
+        return -6;
+    }
+
+    /* Stop any active scan before tearing down the stack (M-S2-2 fix) */
+    if (ble_scan_is_active()) {
+        ble_scan_stop();
+    }
+
+    /* Stop the host, then wait for the host task to exit before deinit —
+     * same sequence as the sync-timeout path (B-S2-1, L-S2-1 fix) */
+    nimble_port_stop();
+    vTaskDelay(pdMS_TO_TICKS(200));
+    nimble_port_deinit();
+
+    if (s_sync_event_group) {
+        vEventGroupDelete(s_sync_event_group);
+        s_sync_event_group = NULL;
+    }
+
+    /* Release NVS opened in ble_init (M-S2-2 fix) */
+    nvs_flash_deinit();
+
+    s_initialized = false;
+    return 0;
+}
+
+bool ble_is_ready(void)
+{
+    return s_initialized;
+}

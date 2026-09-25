@@ -1,0 +1,38 @@
+#!/bin/sh
+# commit-msg hook — enforces the project commit-message standard
+# (QWEN.md §1): type(scope) subject + four filled sections.
+# Genuine exceptions bypass with: git commit --no-verify
+
+MSG_FILE="$1"
+SUBJECT=$(head -n 1 "$MSG_FILE")
+
+# Git-generated subjects are exempt
+case "$SUBJECT" in
+    "Merge "*|"Revert "*|"fixup!"*|"squash!"*|"amend!"*) exit 0 ;;
+esac
+
+fail=0
+err() { printf 'commit-msg: %s\n' "$1" >&2; fail=1; }
+
+# 1) Subject: type(scope): summary
+printf '%s\n' "$SUBJECT" | grep -Eq \
+  '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([A-Za-z0-9_./-]+\))?: .{3,}' \
+  || err "subject must be 'type(scope): summary' (types: feat fix docs style refactor perf test build ci chore revert)"
+
+# 2) Required section headers
+for sec in "## What Changed" "## Why" "## How" "## Verification"; do
+    grep -q "^$sec" "$MSG_FILE" || err "missing section header: $sec"
+done
+
+# 3) '## What Changed' must contain at least one non-empty content line
+awk '
+    /^## What Changed/ { insec = 1; next }
+    insec && /^## /    { exit }
+    insec && NF        { found = 1; exit }
+    END                { exit(found ? 0 : 1) }
+' "$MSG_FILE" || err "'## What Changed' is empty — describe the file changes"
+
+if [ "$fail" -ne 0 ]; then
+    echo "commit-msg: message rejected — fix it, or bypass with --no-verify" >&2
+    exit 1
+fi

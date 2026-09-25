@@ -1,0 +1,15 @@
+menu "H6.1 Tool Registry"
+
+config LUA_HW_BINDINGS
+    bool "Expose hw.* bindings in the Lua sandbox"
+    default y
+    help
+        H6.1 M3 device API for tool packs: hw.millis, hw.gpio_write,
+        hw.gpio_read, hw.adc_read (ADC1), hw.kv_set / hw.kv_get (a
+        device-owned key-value store under /littlefs/kv — the
+        "configure" deploy-mode seam). Pins are whitelisted (USB,
+        flash and PSRAM pins are excluded). Disable for a locked-down
+        build; tool packs that wrap hw.* then degrade to clean error
+        strings.
+
+endmenu

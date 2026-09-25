@@ -1,0 +1,1331 @@
+/*
+ * CLI Command Interface (F4.1) — cli_commands.c
+ *
+ * Text command parser/dispatcher with a 3-state machine
+ * (IDLE / SCANNING / SCRIPT_RUNNING). Zero allocation: all JSON is
+ * written into the caller-supplied response buffer.
+ *
+ * Subsystem failures are reported inside the JSON response with
+ * return value 0; parser-level failures return negative CLI_ERR_*
+ * codes (and still write a JSON error response where possible).
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+
+#include "esp_system.h"
+
+#include "cli_if.h"
+#include "ble_if.h"
+#include "lua_if.h"
+#include "script_if.h"
+#include "storage_if.h"
+#include "bridge_if.h"
+#include "pack_if.h"
+#include "power_if.h"
+#include "json_if.h"
+
+#define CLI_FW_VERSION "1.0.0"
+
+#define SCAN_INTERVAL_MIN_MS  10
+#define SCAN_INTERVAL_MAX_MS  10000
+
+/* The CONN command family exists in three builds: firmware with the
+ * feature (real handlers), the host test build (handlers against stubs),
+ * and firmware without the feature (-451 responses only). */
+#if defined(CONFIG_BLE_CONN_ENABLED) || defined(HOST_BUILD)
+#define CONN_CMD_SUPPORTED 1
+#endif
+
+/* Filter engine owned by the CLI (shared with the scan pipeline via
+ * pipeline_set_filter(cli_get_filter_engine())) */
+static filter_engine_t s_filter_engine;
+
+/* H6.1 M3: LUA BEGIN ... LUA END chunk session — a longer program is
+ * uploaded as text lines (fail-closed scanned like every other Lua
+ * path) and executed as ONE chunk on END, so locals persist across
+ * lines. Valid in any CLI state (tools live outside the state machine,
+ * decision 11). */
+#define LUA_CHUNK_MAX 4096
+static char     s_chunk[LUA_CHUNK_MAX];
+static uint32_t s_chunk_len = 0;
+static bool     s_chunk_active = false;
+
+static void s_lua_chunk_abort(void)
+{
+    s_chunk_active = false;
+    s_chunk_len = 0;
+}
+
+/* Write formatted JSON into the response buffer; on truncation write a
+ * truncated-error JSON and return CLI_ERR_BUFFER from the caller. */
+#define CLI_EMIT(resp, len, ...)                                             \
+    do {                                                                     \
+        int _n = snprintf((resp), (len), __VA_ARGS__);                       \
+        if (_n < 0 || (size_t)_n >= (size_t)(len)) {                         \
+            snprintf((resp), (len),                                          \
+                "{\"status\":\"error\",\"code\":-903,"                       \
+                "\"msg\":\"response truncated\"}");                          \
+            return CLI_ERR_BUFFER;                                           \
+        }                                                                    \
+    } while (0)
+
+static int s_state_error(char *response, uint16_t response_len,
+                         const char *cmd_name, const char *why)
+{
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"error\",\"cmd\":\"%s\",\"code\":%d,"
+        "\"msg\":\"invalid state: %s\"}",
+        cmd_name, CLI_ERR_STATE, why);
+    return CLI_ERR_STATE;
+}
+
+static int s_syntax_error(char *response, uint16_t response_len,
+                          const char *expected)
+{
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"error\",\"msg\":\"invalid syntax: expected %s\"}",
+        expected);
+    return CLI_ERR_INVALID_CMD;
+}
+
+/* Append formatted text at *off; returns 0 or CLI_ERR_BUFFER. */
+static int s_append(char *response, uint16_t response_len, int *off,
+                    const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int remaining = (int)response_len - *off;
+    int n = (remaining > 0)
+        ? vsnprintf(response + *off, (size_t)remaining, fmt, ap) : -1;
+    va_end(ap);
+    if (n < 0 || n >= remaining) {
+        snprintf(response, response_len,
+            "{\"status\":\"error\",\"code\":-903,"
+            "\"msg\":\"response truncated\"}");
+        return CLI_ERR_BUFFER;
+    }
+    *off += n;
+    return 0;
+}
+
+cli_state_t cli_get_state(void)
+{
+    if (script_is_running()) return CLI_STATE_SCRIPT_RUNNING;
+    if (ble_scan_is_active()) return CLI_STATE_SCANNING;
+    return CLI_STATE_IDLE;
+}
+
+filter_engine_t *cli_get_filter_engine(void)
+{
+    return &s_filter_engine;
+}
+
+int cli_init(void)
+{
+    int ret = filter_init(&s_filter_engine);
+    if (ret != 0) return ret;
+    return 0;
+}
+
+/* ---- STATUS / VERSION ------------------------------------------------ */
+
+static int h_status(char *response, uint16_t response_len)
+{
+    pipeline_stats_t stats;
+    pipeline_get_stats(&stats);
+
+    uint32_t free_space = 0;
+    storage_get_free_space(&free_space);
+
+    /* H4 observability: system heap + Lua static-pool pressure */
+    uint32_t lua_used = 0, lua_peak = 0;
+    lua_engine_pool_stats(&lua_used, &lua_peak);
+
+    const char *state_name = "idle";
+    cli_state_t st = cli_get_state();
+    if (st == CLI_STATE_SCANNING) state_name = "scanning";
+    else if (st == CLI_STATE_SCRIPT_RUNNING) state_name = "script_running";
+
+    /* Assembled with s_append so the F2.4 conn section can vary by build
+     * without format-literal gymnastics. */
+    int off = 0;
+    int ret = s_append(response, response_len, &off,
+        "{\"status\":\"ok\",\"cmd\":\"status\","
+        "\"state\":\"%s\","
+        "\"reset_reason\":%d,"
+        "\"scanning\":%s,"
+        "\"queue_drops\":%lu,"
+        "\"filter_count\":%d,"
+        "\"lua_ready\":%s,"
+        "\"script_loaded\":%s,"
+        "\"script_running\":%s,"
+        "\"free_storage\":%lu,"
+        "\"free_heap\":%lu,"
+        "\"lua_pool\":{\"used\":%lu,\"peak\":%lu},"
+        "\"pipeline\":{\"received\":%lu,\"filtered\":%lu,"
+        "\"output\":%lu,\"parse_err\":%lu,\"encode_err\":%lu},",
+        state_name,
+        /* Boot observability: how this boot happened (11 = USB reset,
+         * which the host triggers by closing the port mid-scan) */
+        (int)esp_reset_reason(),
+        ble_scan_is_active() ? "true" : "false",
+        (unsigned long)ble_scan_get_drop_count(),
+        filter_get_count(&s_filter_engine),
+        lua_engine_is_ready() ? "true" : "false",
+        script_is_loaded() ? "true" : "false",
+        script_is_running() ? "true" : "false",
+        (unsigned long)free_space,
+        (unsigned long)esp_get_free_heap_size(),
+        (unsigned long)lua_used,
+        (unsigned long)lua_peak,
+        (unsigned long)stats.total_received,
+        (unsigned long)stats.total_filtered,
+        (unsigned long)stats.total_output,
+        (unsigned long)stats.parse_errors,
+        (unsigned long)stats.encode_errors);
+    if (ret != 0) return ret;
+
+#ifdef CONN_CMD_SUPPORTED
+    /* F2.4: additive conn object — existing host consumers ignore it. */
+    ble_conn_status_t cs;
+    ble_conn_get_status(&cs);
+    char conn_addr[18] = "00:00:00:00:00:00";
+    if (cs.state != BLE_CONN_STATE_OFF) {
+        snprintf(conn_addr, sizeof(conn_addr), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 cs.peer_addr[0], cs.peer_addr[1], cs.peer_addr[2],
+                 cs.peer_addr[3], cs.peer_addr[4], cs.peer_addr[5]);
+    }
+    ret = s_append(response, response_len, &off,
+        "\"conn\":{\"enabled\":true,\"state\":\"%s\",\"active\":%s,"
+        "\"addr\":\"%s\",\"tx_lines\":%lu,\"dropped\":%lu},",
+        ble_conn_state_name(cs.state),
+        ble_conn_is_active() ? "true" : "false",
+        conn_addr,
+        (unsigned long)cs.tx_lines, (unsigned long)cs.dropped);
+    if (ret != 0) return ret;
+#else
+    ret = s_append(response, response_len, &off,
+        "\"conn\":{\"enabled\":false},");
+    if (ret != 0) return ret;
+#endif
+
+    return s_append(response, response_len, &off, "\"v\":1}");
+}
+
+static int h_version(char *response, uint16_t response_len)
+{
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"ok\",\"cmd\":\"version\",\"firmware\":\"%s\","
+        "\"build_date\":\"%s\",\"chip\":\"esp32s3\"}",
+        CLI_FW_VERSION, __DATE__);
+    return 0;
+}
+
+/* ---- SCAN ------------------------------------------------------------ */
+
+static int h_scan(const char *action, char *response, uint16_t response_len)
+{
+    cli_state_t st = cli_get_state();
+
+    if (strcmp(action, "START") == 0) {
+        if (st == CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "scan_start",
+                                 "stop the script first");
+        if (!ble_is_ready()) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan_start\","
+                "\"msg\":\"BLE not initialized\"}");
+            return 0;
+        }
+        if (st == CLI_STATE_SCANNING) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan_start\","
+                "\"msg\":\"already scanning\"}");
+            return 0;
+        }
+        int ret1 = ble_scan_start();
+        if (ret1 != 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan_start\","
+                "\"msg\":\"scan failed: %d\"}", ret1);
+            return 0;
+        }
+        int ret2 = pipeline_start();
+        if (ret2 != 0) {
+            /* Rollback: scan started but pipeline failed (B-S3-7 fix) */
+            ble_scan_stop();
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan_start\","
+                "\"msg\":\"pipeline failed: %d\"}", ret2);
+            return 0;
+        }
+        /* F4.3: block light sleep while streaming — console output is
+         * dropped if the SoC sleeps between adv events. */
+        power_hold_activity(true);
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"scan_start\"}");
+        return 0;
+    }
+
+    if (strcmp(action, "STOP") == 0) {
+        if (st == CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "scan_stop",
+                                 "stop the script first");
+        if (st != CLI_STATE_SCANNING) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan_stop\","
+                "\"msg\":\"not scanning\"}");
+            return 0;
+        }
+        /* L-S4-2 fix: stop results were silently ignored */
+        int r1 = pipeline_stop();
+        int r2 = ble_scan_stop();
+        power_hold_activity(false);
+        if (r1 != 0 || r2 != 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan_stop\","
+                "\"msg\":\"stop failed: %d/%d\"}", r1, r2);
+            return 0;
+        }
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"scan_stop\"}");
+        return 0;
+    }
+
+    if (strncmp(action, "INTERVAL ", 9) == 0) {
+        if (st != CLI_STATE_IDLE)
+            return s_state_error(response, response_len, "scan_interval",
+                                 "stop scanning first");
+        char *end = NULL;
+        long ms = strtol(action + 9, &end, 10);
+        if (end == action + 9 || *end != '\0' ||
+            ms < SCAN_INTERVAL_MIN_MS || ms > SCAN_INTERVAL_MAX_MS) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan_interval\","
+                "\"msg\":\"invalid value: expected %d..%d ms\"}",
+                SCAN_INTERVAL_MIN_MS, SCAN_INTERVAL_MAX_MS);
+            return 0;
+        }
+        int ret = ble_scan_set_params((uint32_t)ms, (uint32_t)ms);
+        if (ret != 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"scan_interval\","
+                "\"msg\":\"set params failed: %d\"}", ret);
+            return 0;
+        }
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"scan_interval\",\"value\":%ld}",
+            ms);
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+                          "SCAN START|STOP|INTERVAL <ms>");
+}
+
+/* ---- FILTER ---------------------------------------------------------- */
+
+static const char *s_filter_type_name(filter_type_t t)
+{
+    switch (t) {
+        case FILTER_TYPE_NAME: return "name";
+        case FILTER_TYPE_UUID: return "uuid";
+        case FILTER_TYPE_RSSI: return "rssi";
+        case FILTER_TYPE_MAC:  return "mac";
+        default:               return "unknown";
+    }
+}
+
+static int h_filter(const char *action, char *response, uint16_t response_len)
+{
+    cli_state_t st = cli_get_state();
+
+    if (strcmp(action, "CLEAR") == 0) {
+        if (st != CLI_STATE_IDLE)
+            return s_state_error(response, response_len, "filter_clear",
+                                 "stop scanning/script first");
+        filter_lock();  /* filter engine owns its concurrency now */
+        filter_clear(&s_filter_engine);
+        filter_unlock();
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"filter_clear\"}");
+        return 0;
+    }
+
+    if (strcmp(action, "LIST") == 0) {
+        int count = filter_get_count(&s_filter_engine);
+        int off = 0;
+        int ret = s_append(response, response_len, &off,
+            "{\"status\":\"ok\",\"cmd\":\"filter_list\","
+            "\"count\":%d,\"filters\":[", count);
+        if (ret != 0) return ret;
+        for (uint8_t i = 0; i < s_filter_engine.rule_count; i++) {
+            const filter_rule_t *r = &s_filter_engine.rules[i];
+            if (r->type == FILTER_TYPE_RSSI) {
+                ret = s_append(response, response_len, &off,
+                    "%s{\"type\":\"rssi\",\"threshold\":%d}",
+                    i > 0 ? "," : "", (int)r->rssi_threshold);
+            } else {
+                /* H1 fix: patterns are user-supplied text */
+                char pattern_esc[FILTER_PATTERN_MAX_LEN * 2];
+                json_escape_str(r->pattern, pattern_esc, sizeof(pattern_esc));
+                ret = s_append(response, response_len, &off,
+                    "%s{\"type\":\"%s\",\"pattern\":\"%s\"}",
+                    i > 0 ? "," : "", s_filter_type_name(r->type),
+                    pattern_esc);
+            }
+            if (ret != 0) return ret;
+        }
+        return s_append(response, response_len, &off, "]}");
+    }
+
+    if (strncmp(action, "ADD ", 4) == 0) {
+        if (st != CLI_STATE_IDLE)
+            return s_state_error(response, response_len, "filter_add",
+                                 "stop scanning/script first");
+
+        /* FILTER ADD <type> <value> */
+        const char *args = action + 4;
+        char type_str[16] = {0};
+        char value[FILTER_PATTERN_MAX_LEN] = {0};
+        int parsed = sscanf(args, "%15s %31s", type_str, value);
+
+        if (parsed < 2) {
+            return s_syntax_error(response, response_len,
+                                  "FILTER ADD <NAME|UUID|MAC|RSSI> <value>");
+        }
+
+        filter_type_t ftype;
+        int8_t rssi_val = 0;
+        if (strcmp(type_str, "NAME") == 0) {
+            ftype = FILTER_TYPE_NAME;
+        } else if (strcmp(type_str, "UUID") == 0) {
+            ftype = FILTER_TYPE_UUID;
+        } else if (strcmp(type_str, "MAC") == 0) {
+            ftype = FILTER_TYPE_MAC;
+        } else if (strcmp(type_str, "RSSI") == 0) {
+            ftype = FILTER_TYPE_RSSI;
+            /* Validate range before narrowing to int8_t (M-S3-7 fix —
+             * atoi("999") wrapped silently) */
+            char *end = NULL;
+            long v = strtol(value, &end, 10);
+            if (end == value || *end != '\0' || v < -128 || v > 127) {
+                CLI_EMIT(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"filter_add\","
+                    "\"msg\":\"RSSI must be a number in -128..127\"}");
+                return 0;
+            }
+            rssi_val = (int8_t)v;
+        } else {
+            char type_esc[sizeof(type_str) * 2];
+            json_escape_str(type_str, type_esc, sizeof(type_esc));
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"filter_add\","
+                "\"msg\":\"unknown type: %s\"}", type_esc);
+            return 0;
+        }
+
+        filter_lock();
+        int ret = filter_add_rule(&s_filter_engine, ftype,
+            ftype == FILTER_TYPE_RSSI ? NULL : value, rssi_val);
+        filter_unlock();
+        if (ret == 0) {
+            /* H1 fix: value is user-supplied text */
+            char value_esc[FILTER_PATTERN_MAX_LEN * 2];
+            json_escape_str(value, value_esc, sizeof(value_esc));
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"filter_add\","
+                "\"index\":%d,\"type\":\"%s\",\"value\":\"%s\"}",
+                (int)s_filter_engine.rule_count - 1, type_str, value_esc);
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"filter_add\","
+                "\"msg\":\"add failed: %d\"}", ret);
+        }
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+                          "FILTER ADD|CLEAR|LIST");
+}
+
+/* ---- LUA (extension commands, kept beyond the F4.1 spec) -------------- */
+
+static int h_lua(const char *action, char *response, uint16_t response_len)
+{
+    if (strncmp(action, "EXEC ", 5) == 0) {
+        const char *script = action + 5;
+        /* P1 (pre-existing gap): one-line execs bypassed the per-line
+         * fail-closed scan every upload path applies. Host tools
+         * pre-scan, but the device must hold the line for direct
+         * terminal users too. */
+        {
+            uint32_t slen = (uint32_t)strlen(script);
+            const char *tok = slen > 0 ? bridge_scan_line(script, slen)
+                                       : NULL;
+            if (tok != NULL) {
+                CLI_EMIT(response, response_len,
+                    "{\"status\":\"error\",\"cmd\":\"lua_exec\","
+                    "\"code\":-612,\"msg\":\"sandbox violation: "
+                    "'%s' is not allowed\"}", tok);
+                return 0;
+            }
+        }
+        if (!lua_engine_is_ready()) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_exec\","
+                "\"msg\":\"Lua engine not initialized\"}");
+            return 0;
+        }
+        char lua_result[LUA_RESULT_MAX_LEN] = {0};
+        int ret = lua_engine_exec(script, lua_result, sizeof(lua_result));
+        /* H1 fix: Lua results and error messages can contain quotes and
+         * control chars ('[string "..."]') — escape before embedding in
+         * the JSON response so hosts always receive valid JSON. */
+        char result_esc[LUA_RESULT_MAX_LEN * 2];
+        json_escape_str(lua_result[0] ? lua_result
+                                      : (ret == 0 ? "" : "exec failed"),
+                        result_esc, sizeof(result_esc));
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"lua_exec\","
+                "\"result\":\"%s\"}", result_esc);
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_exec\","
+                "\"code\":%d,\"msg\":\"%s\"}",
+                ret, result_esc);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "BEGIN") == 0) {
+        if (s_chunk_active) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_begin\","
+                "\"code\":-911,\"msg\":\"chunk upload already in progress\"}");
+            return 0;
+        }
+        if (!lua_engine_is_ready()) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_begin\","
+                "\"msg\":\"Lua engine not initialized\"}");
+            return 0;
+        }
+        s_chunk_active = true;
+        s_chunk_len = 0;
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"lua_begin\",\"msg\":\"ready\"}");
+        return 0;
+    }
+
+    if (strcmp(action, "END") == 0) {
+        if (!s_chunk_active) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_end\","
+                "\"code\":-911,\"msg\":\"no chunk in progress\"}");
+            return 0;
+        }
+        s_chunk[s_chunk_len] = '\0';
+        s_chunk_active = false;
+        if (!lua_engine_is_ready()) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_end\","
+                "\"msg\":\"Lua engine not initialized\"}");
+            return 0;
+        }
+        char lua_result[LUA_RESULT_MAX_LEN] = {0};
+        int ret = lua_engine_exec(s_chunk, lua_result, sizeof(lua_result));
+        char result_esc[LUA_RESULT_MAX_LEN * 2];
+        json_escape_str(lua_result[0] ? lua_result
+                                      : (ret == 0 ? "" : "exec failed"),
+                        result_esc, sizeof(result_esc));
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"lua_end\","
+                "\"result\":\"%s\"}", result_esc);
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_end\","
+                "\"code\":%d,\"msg\":\"%s\"}", ret, result_esc);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "INIT") == 0) {
+        int ret = lua_engine_init();
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"lua_init\"}");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_init\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "DEINIT") == 0) {
+        /* B6 fix: refuse deinit while the pipeline may still invoke Lua
+         * hooks or wait on the engine lock — lua_engine_deinit deletes the
+         * mutex, so tearing the engine down mid-scan races the pipeline
+         * task. Stop scanning/scripts first. */
+        if (ble_scan_is_active() || script_is_running()) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_deinit\","
+                "\"code\":-911,\"msg\":\"stop scanning and scripts first\"}");
+            return 0;
+        }
+        int ret = lua_engine_deinit();
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"lua_deinit\"}");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"lua_deinit\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+                          "LUA EXEC|INIT|DEINIT|BEGIN|END");
+}
+
+/* One data line during a LUA chunk upload (silent ack on success; a
+ * violating line answers immediately and aborts, like the F4.2 bridge
+ * and pack uploads). */
+static int s_lua_chunk_line(const char *line, char *response,
+                            uint16_t response_len)
+{
+    if (!s_chunk_active) {
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"lua_data\","
+            "\"code\":-911,\"msg\":\"no chunk in progress\"}");
+        return 0;
+    }
+    uint32_t len = (uint32_t)strlen(line);
+    if (len == 0) {
+        response[0] = '\0';
+        return 0;               /* blank lines are legal Lua, store none */
+    }
+    const char *tok = bridge_scan_line(line, len);
+    if (tok != NULL) {
+        s_lua_chunk_abort();
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"lua_data\",\"code\":-612,"
+            "\"msg\":\"sandbox violation: '%s' is not allowed\"}", tok);
+        return 0;
+    }
+    if (s_chunk_len + len + 1 > LUA_CHUNK_MAX - 1) {
+        s_lua_chunk_abort();
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"lua_data\","
+            "\"code\":-803,\"msg\":\"chunk buffer full\"}");
+        return 0;
+    }
+    memcpy(s_chunk + s_chunk_len, line, len);
+    s_chunk_len += len;
+    s_chunk[s_chunk_len++] = '\n';
+    response[0] = '\0';
+    return 0;
+}
+
+/* ---- SCRIPT ----------------------------------------------------------- */
+
+static int s_hex_nibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static int h_script(const char *action, char *response, uint16_t response_len)
+{
+    cli_state_t st = cli_get_state();
+
+    if (strcmp(action, "BEGIN") == 0) {
+        int ret = script_upload_begin();
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"script_begin\"}");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"script_begin\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "LOAD") == 0) {
+        /* F4.2 text-line upload protocol (LLM bridge) */
+        return bridge_upload_begin(response, response_len);
+    }
+
+    if (strncmp(action, "CHUNK ", 6) == 0) {
+        /* SCRIPT CHUNK <hex_data> — validated decode (M-S3-8 fix) */
+        const char *hex = action + 6;
+        size_t hex_len = strlen(hex);
+        uint8_t chunk_buf[512];
+        uint16_t chunk_len = 0;
+        bool hex_ok = (hex_len > 0) && (hex_len % 2 == 0) &&
+                      (hex_len / 2 <= sizeof(chunk_buf));
+
+        if (hex_ok) {
+            for (size_t i = 0; i < hex_len; i += 2) {
+                int hi = s_hex_nibble(hex[i]);
+                int lo = s_hex_nibble(hex[i + 1]);
+                if (hi < 0 || lo < 0) {
+                    hex_ok = false;
+                    break;
+                }
+                chunk_buf[chunk_len++] = (uint8_t)((hi << 4) | lo);
+            }
+        }
+
+        if (!hex_ok) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"script_chunk\","
+                "\"msg\":\"invalid hex: even length, 0-9a-f, max %u bytes\"}",
+                (unsigned)sizeof(chunk_buf));
+            return 0;
+        }
+        int ret = script_upload_chunk(chunk_buf, chunk_len);
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"script_chunk\","
+                "\"bytes\":%d}", chunk_len);
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"script_chunk\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "END") == 0) {
+        /* SCRIPT END finalizes whichever protocol is active: the F4.2
+         * text-line bridge if a SCRIPT LOAD upload is in progress,
+         * otherwise the hex-chunk path. */
+        if (bridge_is_uploading()) {
+            return bridge_upload_finish(response, response_len);
+        }
+        int ret = script_upload_end(NULL, 0);
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"script_end\"}");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"script_end\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "RUN") == 0) {
+        if (st == CLI_STATE_IDLE)
+            return s_state_error(response, response_len, "script_run",
+                                 "start scanning first");
+        if (st == CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "script_run",
+                                 "already running");
+        int ret = script_run();
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"script_run\"}");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"script_run\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "STOP") == 0) {
+        if (st != CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "script_stop",
+                                 "no script running");
+        script_stop();
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"script_stop\"}");
+        return 0;
+    }
+
+    if (strcmp(action, "STATUS") == 0) {
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"script_status\","
+            "\"loaded\":%s,\"running\":%s}",
+            script_is_loaded() ? "true" : "false",
+            script_is_running() ? "true" : "false");
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+                          "SCRIPT LOAD|BEGIN|CHUNK|END|RUN|STOP|STATUS");
+}
+
+/* ---- PACK (H6.1 M2: tool-pack storage + boot autorun) ------------------- */
+
+static int h_pack(const char *action, char *response, uint16_t response_len)
+{
+    if (strcmp(action, "LIST") == 0) {
+        int ret = pack_store_list(response, response_len);
+        if (ret != 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_list\",\"code\":%d}",
+                ret);
+        }
+        return 0;
+    }
+
+    if (strncmp(action, "BEGIN ", 6) == 0) {
+        const char *name = action + 6;
+        bool autorun = false;
+        char nbuf[PACK_MAX_NAME + 1];
+        const char *sp = strchr(name, ' ');
+        if (sp != NULL) {
+            size_t nl = (size_t)(sp - name);
+            if (nl == 0 || nl >= sizeof(nbuf))
+                return s_syntax_error(response, response_len,
+                                      "PACK BEGIN <name> [autorun]");
+            memcpy(nbuf, name, nl);
+            nbuf[nl] = '\0';
+            name = nbuf;
+            if (strcmp(sp + 1, "autorun") == 0 ||
+                strcmp(sp + 1, "AUTORUN") == 0) {
+                autorun = true;
+            } else {
+                return s_syntax_error(response, response_len,
+                                      "PACK BEGIN <name> [autorun]");
+            }
+        }
+        char err[96];
+        int ret = pack_store_upload_begin(name, autorun, err, sizeof(err));
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_begin\","
+                "\"msg\":\"ready\",\"autorun\":%s}",
+                autorun ? "true" : "false");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_begin\","
+                "\"code\":%d,\"msg\":\"%s\"}", ret, err);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "END") == 0) {
+        uint32_t size = 0;
+        char err[96];
+        int ret = pack_store_upload_finish(&size, err, sizeof(err));
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_end\",\"size\":%lu}",
+                (unsigned long)size);
+        } else {
+            /* H1-class fix: a pack compile error (luaL_loadstring) carries
+             * quotes/control chars ('[string "pack"]:1: ...'); escape it so
+             * the response stays strict JSON (eval-2026-08-11 H1, audit B1). */
+            char err_esc[sizeof(err) * 2];
+            json_escape_str(err, err_esc, sizeof(err_esc));
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_end\","
+                "\"code\":%d,\"msg\":\"%s\"}", ret, err_esc);
+        }
+        return 0;
+    }
+
+    if (strncmp(action, "RUN ", 4) == 0) {
+        char err[96];
+        char result[LUA_RESULT_MAX_LEN] = {0};
+        int ret = pack_store_run(action + 4, result, sizeof(result),
+                                 err, sizeof(err));
+        if (ret == 0) {
+            char esc[LUA_RESULT_MAX_LEN * 2];
+            json_escape_str(result[0] ? result : "", esc, sizeof(esc));
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_run\","
+                "\"result\":\"%s\"}", esc);
+        } else {
+            /* B11: err may carry the raw Lua error text (quotes!) */
+            char err_esc[sizeof(err) * 2];
+            json_escape_str(err, err_esc, sizeof(err_esc));
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_run\","
+                "\"code\":%d,\"msg\":\"%s\"}", ret, err_esc);
+        }
+        return 0;
+    }
+
+    if (strncmp(action, "DEL ", 4) == 0) {
+        int ret = pack_store_del(action + 4);
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_del\"}");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_del\",\"code\":%d}",
+                ret);
+        }
+        return 0;
+    }
+
+    if (strncmp(action, "AUTORUN ", 8) == 0) {
+        const char *rest = action + 8;
+        const char *sp = strchr(rest, ' ');
+        char nbuf[PACK_MAX_NAME + 1];
+        bool on = false, have = false;
+        if (sp != NULL) {
+            size_t nl = (size_t)(sp - rest);
+            if (nl > 0 && nl < sizeof(nbuf)) {
+                memcpy(nbuf, rest, nl);
+                nbuf[nl] = '\0';
+                if (strcmp(sp + 1, "ON") == 0) { on = true; have = true; }
+                else if (strcmp(sp + 1, "OFF") == 0) { on = false; have = true; }
+            }
+        }
+        if (!have)
+            return s_syntax_error(response, response_len,
+                                  "PACK AUTORUN <name> ON|OFF");
+        int ret = pack_store_set_autorun(nbuf, on);
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"pack_autorun\","
+                "\"autorun\":%s}", on ? "true" : "false");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"pack_autorun\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+        "PACK LIST|BEGIN <name> [autorun]|END|RUN <name>|DEL <name>|"
+        "AUTORUN <name> ON|OFF");
+}
+
+/* One data line during a PACK upload (mirrors the F4.2 bridge: silent
+ * ack on success; a rejection answers immediately and aborts). */
+static int h_pack_data_line(const char *line, char *response,
+                            uint16_t response_len)
+{
+    const char *tok = NULL;
+    int ret = pack_store_upload_line(line, (uint32_t)strlen(line), &tok);
+    if (ret == 0) {
+        response[0] = '\0';
+        return 0;
+    }
+    if (ret == -612 && tok != NULL) {
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"pack_data\",\"code\":-612,"
+            "\"msg\":\"sandbox violation: '%s' is not allowed\"}", tok);
+        return 0;
+    }
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"error\",\"cmd\":\"pack_data\",\"code\":%d}", ret);
+    return 0;
+}
+
+/* ---- POWER (extension commands for F4.3 observability/control) --------- */
+
+static int h_power(const char *action, char *response, uint16_t response_len)
+{
+    if (strcmp(action, "SLEEP ON") == 0) {
+        power_enable_sleep(true);
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"power_sleep\",\"enabled\":true}");
+        return 0;
+    }
+
+    if (strcmp(action, "SLEEP OFF") == 0) {
+        power_enable_sleep(false);
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"power_sleep\",\"enabled\":false}");
+        return 0;
+    }
+
+    if (strcmp(action, "STATUS") == 0) {
+        power_config_t cfg;
+        power_get_config(&cfg);
+        uint32_t ma = 0;
+        power_get_current_ma(&ma);
+        const char *state =
+            (power_get_state() == POWER_STATE_LIGHT_SLEEP)
+            ? "light_sleep" : "active";
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"power_status\","
+            "\"sleep_enabled\":%s,"
+            "\"state\":\"%s\","
+            "\"est_current_ma\":%lu}",
+            cfg.sleep_enabled ? "true" : "false",
+            state, (unsigned long)ma);
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+                          "POWER SLEEP ON|OFF|STATUS");
+}
+
+/* ---- CONN (F4 extension for F2.4 BLE connection) ---------------------- */
+
+#ifdef CONN_CMD_SUPPORTED
+
+/* State matrix (review A1): CONN composes with scanning but not with a
+ * running script — conn lines bypass the Lua hooks, so running both would
+ * be misleading. STOP and STATUS are always allowed (recovery/observe). */
+static int h_interrupt(char *response, uint16_t response_len);  /* fwd */
+
+static int h_conn(const char *action, char *response, uint16_t response_len)
+{
+    cli_state_t st = cli_get_state();
+
+    if (strcmp(action, "TARGET") == 0 || strncmp(action, "TARGET ", 7) == 0) {
+        if (st == CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "conn_target",
+                                 "stop the script first");
+        const char *args = (action[6] == ' ') ? action + 7 : NULL;
+        char svc[40] = {0}, chr[40] = {0};
+        if (args == NULL || sscanf(args, "%39s %39s", svc, chr) < 1) {
+            return s_syntax_error(response, response_len,
+                                  "CONN TARGET <svc-uuid> [<char-uuid>]");
+        }
+        const char *chr_arg = (strchr(args, ' ') != NULL) ? chr : NULL;
+        int ret = ble_conn_set_target(svc, chr_arg);
+        if (ret == 0) {
+            /* Two explicit forms: a conditional format string cannot
+             * close the chr quote only when chr is emitted (the shared
+             * tail either drops or doubles the quote). */
+            if (chr_arg != NULL) {
+                CLI_EMIT(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"conn_target\","
+                    "\"svc\":\"%s\",\"chr\":\"%s\"}", svc, chr_arg);
+            } else {
+                CLI_EMIT(response, response_len,
+                    "{\"status\":\"ok\",\"cmd\":\"conn_target\","
+                    "\"svc\":\"%s\"}", svc);
+            }
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"conn_target\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "START") == 0 || strncmp(action, "START ", 6) == 0) {
+        if (st == CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "conn_start",
+                                 "stop the script first");
+        const char *args = (action[5] == ' ') ? action + 6 : NULL;
+        char addr[24] = {0}, type[12] = {0};
+        const char *addr_arg = NULL, *type_arg = NULL;
+        if (args != NULL && sscanf(args, "%23s %11s", addr, type) >= 1) {
+            addr_arg = addr;
+            /* Second token only meaningful when it is a type word; the
+             * sscanf above may grab garbage into type when absent. */
+            const char *second = strchr(args, ' ');
+            type_arg = (second != NULL && second[1] != '\0') ? type : NULL;
+        }
+        /* Direct connect blocks until up/failed (bounded by the link
+         * timeout); auto-connect returns immediately. */
+        int ret = ble_conn_start(addr_arg, type_arg);
+        if (ret == BLE_CONN_ERR_INTERRUPTED) {
+            /* Ctrl+C arrived during the bounded wait: run the normal
+             * interrupt semantics (abort upload, stop script/scan/conn). */
+            return h_interrupt(response, response_len);
+        }
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"conn_start\",\"mode\":\"%s\"}",
+                addr_arg ? "direct" : "auto");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"conn_start\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "STOP") == 0) {
+        int ret = ble_conn_stop();
+        if (ret == 0) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"ok\",\"cmd\":\"conn_stop\"}");
+        } else {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"conn_stop\","
+                "\"code\":%d}", ret);
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "STATUS") == 0) {
+        ble_conn_status_t cs;
+        ble_conn_get_status(&cs);
+        char addr_str[18] = "00:00:00:00:00:00";
+        bool have_addr = (cs.state != BLE_CONN_STATE_OFF);
+        if (have_addr) {
+            snprintf(addr_str, sizeof(addr_str),
+                     "%02X:%02X:%02X:%02X:%02X:%02X",
+                     cs.peer_addr[0], cs.peer_addr[1], cs.peer_addr[2],
+                     cs.peer_addr[3], cs.peer_addr[4], cs.peer_addr[5]);
+        }
+        const char *mode = cs.subscribed ? "notify" :
+                           (cs.polling ? "poll" : "none");
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"conn_status\","
+            "\"state\":\"%s\",\"addr\":\"%s\",\"mode\":\"%s\","
+            "\"mtu\":%u,\"poll_interval_ms\":%lu,"
+            "\"connects\":%lu,\"disconnects\":%lu,"
+            "\"rx_notify\":%lu,\"rx_read\":%lu,\"tx_lines\":%lu,"
+            "\"dropped\":%lu,\"errors\":%lu}",
+            ble_conn_state_name(cs.state), addr_str, mode,
+            (unsigned)cs.mtu, (unsigned long)cs.poll_interval_ms,
+            (unsigned long)cs.connects, (unsigned long)cs.disconnects,
+            (unsigned long)cs.rx_notify, (unsigned long)cs.rx_read,
+            (unsigned long)cs.tx_lines, (unsigned long)cs.dropped,
+            (unsigned long)cs.errors);
+        return 0;
+    }
+
+    if (strncmp(action, "INTERVAL ", 9) == 0) {
+        if (st == CLI_STATE_SCRIPT_RUNNING)
+            return s_state_error(response, response_len, "conn_interval",
+                                 "stop the script first");
+        char *end = NULL;
+        long ms = strtol(action + 9, &end, 10);
+        if (end == action + 9 || *end != '\0' ||
+            ms < BLE_CONN_POLL_MIN_MS || ms > BLE_CONN_POLL_MAX_MS) {
+            CLI_EMIT(response, response_len,
+                "{\"status\":\"error\",\"cmd\":\"conn_interval\","
+                "\"msg\":\"invalid value: expected %d..%d ms\"}",
+                BLE_CONN_POLL_MIN_MS, BLE_CONN_POLL_MAX_MS);
+            return 0;
+        }
+        ble_conn_set_poll_interval((uint32_t)ms);
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"ok\",\"cmd\":\"conn_interval\",\"value\":%ld}", ms);
+        return 0;
+    }
+
+    return s_syntax_error(response, response_len,
+                          "CONN TARGET|START|STOP|STATUS|INTERVAL <ms>");
+}
+
+#else /* feature excluded from this build */
+
+static int h_conn(const char *action, char *response, uint16_t response_len)
+{
+    (void)action;
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"error\",\"cmd\":\"conn\",\"code\":-451,"
+        "\"msg\":\"connection feature not compiled in\"}");
+    return 0;
+}
+
+#endif /* CONN_CMD_SUPPORTED */
+
+/* ---- Dispatch ---------------------------------------------------------- */
+
+/* True when the line is recognized as a CLI command (as opposed to a
+ * script text line arriving during a F4.2 text-line upload). */
+static bool s_is_cli_command(const char *cmd)
+{
+    static const char * const cmds[] = {
+        "STATUS", "VERSION", "SCAN", "FILTER", "LUA", "SCRIPT", "PACK",
+        "POWER", "CONN", NULL
+    };
+    for (int i = 0; cmds[i] != NULL; i++) {
+        size_t n = strlen(cmds[i]);
+        if (strcmp(cmd, cmds[i]) == 0 ||
+            (strncmp(cmd, cmds[i], n) == 0 && cmd[n] == ' ')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* ---- Interrupt (Ctrl+C) ------------------------------------------------ */
+
+/* Abort every text-line upload session (F4.2 script bridge, H6.1 pack,
+ * H6.1 LUA chunk). Returns true when one was active. main.c also calls
+ * this when the USB layer dropped an overlong line mid-upload (P2). */
+bool cli_abort_uploads(void)
+{
+    bool any = false;
+    if (bridge_is_uploading()) {
+        bridge_abort();
+        any = true;
+    }
+    if (pack_store_is_uploading()) {
+        pack_store_abort();
+        any = true;
+    }
+    if (s_chunk_active) {
+        s_lua_chunk_abort();
+        any = true;
+    }
+    return any;
+}
+
+/* Ctrl+C from the terminal: stop whatever is streaming (upload, script,
+ * scan) so a flooded terminal can always be recovered with one key. */
+static int h_interrupt(char *response, uint16_t response_len)
+{
+    int fails = 0;
+    (void)cli_abort_uploads();  /* B7: pack + LUA chunk sessions too */
+    if (script_is_running()) {
+        script_stop();
+    }
+#ifdef CONN_CMD_SUPPORTED
+    /* F2.4: one key recovers everything — the connection too. The power
+     * hold is released by the disconnect event callback (main.c wiring). */
+    if (ble_conn_get_state() != BLE_CONN_STATE_OFF) {
+        if (ble_conn_stop() != 0) {
+            fails++;
+        }
+    }
+#endif
+    if (ble_scan_is_active()) {
+        int r1 = pipeline_stop();
+        int r2 = ble_scan_stop();
+        power_hold_activity(false);
+        if (r1 != 0 || r2 != 0) {
+            fails++;
+        }
+    }
+    if (fails > 0) {
+        CLI_EMIT(response, response_len,
+            "{\"status\":\"error\",\"cmd\":\"interrupt\","
+            "\"msg\":\"stop incomplete — check STATUS\"}");
+        return 0;
+    }
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"ok\",\"cmd\":\"interrupt\"}");
+    return 0;
+}
+
+int cli_process_command(const char *cmd, char *response, uint16_t response_len)
+{
+    if (cmd == NULL || response == NULL || response_len == 0)
+        return CLI_ERR_NULL;
+
+    response[0] = '\0';
+
+    /* B10: tolerate trailing whitespace — "PACK END " / "LUA END\t"
+     * must finish their upload, not silently discard it as a stray
+     * command. Trailing blanks are irrelevant to Lua data lines. */
+    char norm[256];
+    const char *line = cmd;
+    size_t clen = strlen(cmd);
+    if (clen > 0 && clen < sizeof(norm)) {
+        while (clen > 0 && (cmd[clen - 1] == ' ' || cmd[clen - 1] == '\t' ||
+                            cmd[clen - 1] == '\r' || cmd[clen - 1] == '\n' ||
+                            cmd[clen - 1] == '\v' || cmd[clen - 1] == '\f'))
+            clen--;
+        memcpy(norm, cmd, clen);
+        norm[clen] = '\0';
+        line = norm;
+    }
+
+    /* Ctrl+C (0x03) — immediate interrupt, takes priority over upload
+     * mode so a stuck SCRIPT LOAD can always be cancelled. */
+    if (line[0] == '\x03' && line[1] == '\0')
+        return h_interrupt(response, response_len);
+
+    /* F4.2 upload mode: every line is script text except SCRIPT END.
+     * Any other recognized CLI command aborts the upload and then
+     * proceeds normally (AC #4). */
+    if (bridge_is_uploading()) {
+        if (strcmp(line, "SCRIPT END") == 0)
+            return h_script("END", response, response_len);
+        if (s_is_cli_command(line))
+            bridge_abort();
+        else
+            return bridge_handle_script_upload(
+                line, (uint32_t)strlen(line), response, response_len);
+    }
+
+    /* H6.1 M2 pack upload: same shape as the F4.2 bridge above. Any
+     * recognized CLI command mid-upload aborts the pack session. */
+    if (pack_store_is_uploading()) {
+        if (strcmp(line, "PACK END") == 0)
+            return h_pack("END", response, response_len);
+        if (s_is_cli_command(line))
+            pack_store_abort();
+        else
+            return h_pack_data_line(line, response, response_len);
+    }
+
+    /* H6.1 M3 chunk upload: same shape again; LUA END executes it. */
+    if (s_chunk_active) {
+        if (strcmp(line, "LUA END") == 0)
+            return h_lua("END", response, response_len);
+        if (s_is_cli_command(line))
+            s_lua_chunk_abort();
+        else
+            return s_lua_chunk_line(line, response, response_len);
+    }
+
+    if (strcmp(line, "STATUS") == 0)
+        return h_status(response, response_len);
+
+    if (strcmp(line, "VERSION") == 0)
+        return h_version(response, response_len);
+
+    if (strcmp(line, "SCAN") == 0)
+        return s_syntax_error(response, response_len,
+                              "SCAN START|STOP|INTERVAL <ms>");
+    if (strncmp(line, "SCAN ", 5) == 0)
+        return h_scan(line + 5, response, response_len);
+
+    if (strcmp(line, "FILTER") == 0)
+        return s_syntax_error(response, response_len,
+                              "FILTER ADD|CLEAR|LIST");
+    if (strncmp(line, "FILTER ", 7) == 0)
+        return h_filter(line + 7, response, response_len);
+
+    if (strcmp(line, "LUA") == 0)
+        return s_syntax_error(response, response_len,
+                              "LUA EXEC|INIT|DEINIT|BEGIN|END");
+    if (strncmp(line, "LUA ", 4) == 0)
+        return h_lua(line + 4, response, response_len);
+
+    if (strcmp(line, "SCRIPT") == 0)
+        return s_syntax_error(response, response_len,
+                              "SCRIPT LOAD|BEGIN|CHUNK|END|RUN|STOP|STATUS");
+    if (strncmp(line, "SCRIPT ", 7) == 0)
+        return h_script(line + 7, response, response_len);
+
+    if (strcmp(line, "PACK") == 0)
+        return s_syntax_error(response, response_len,
+            "PACK LIST|BEGIN <name> [autorun]|END|RUN <name>|DEL <name>|"
+            "AUTORUN <name> ON|OFF");
+    if (strncmp(line, "PACK ", 5) == 0)
+        return h_pack(line + 5, response, response_len);
+
+    if (strcmp(line, "POWER") == 0)
+        return s_syntax_error(response, response_len,
+                              "POWER SLEEP ON|OFF|STATUS");
+    if (strncmp(line, "POWER ", 6) == 0)
+        return h_power(line + 6, response, response_len);
+
+    if (strcmp(line, "CONN") == 0)
+        return s_syntax_error(response, response_len,
+#ifdef CONN_CMD_SUPPORTED
+                              "CONN TARGET|START|STOP|STATUS|INTERVAL <ms>");
+#else
+                              "CONN (not compiled in)");
+#endif
+    if (strncmp(line, "CONN ", 5) == 0)
+        return h_conn(line + 5, response, response_len);
+
+    CLI_EMIT(response, response_len,
+        "{\"status\":\"error\",\"msg\":\"unknown command\"}");
+    return CLI_ERR_INVALID_CMD;
+}

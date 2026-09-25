@@ -1,0 +1,226 @@
+#include "script_if.h"
+#include "lua_if.h"
+#include "storage_if.h"
+#include <string.h>
+#include <stdio.h>
+#include <stdatomic.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#define SCRIPT_PATH "/littlefs/script.lua"
+
+/* ---- Upload State ---- */
+
+typedef struct {
+    bool     active;
+    uint16_t total_received;
+    uint32_t last_chunk_tick;
+    uint8_t  buffer[SCRIPT_MAX_SIZE];
+} script_upload_ctx_t;
+
+static script_upload_ctx_t s_upload = {0};
+/* B1 fix: written by the CLI task, read by the pipeline task — same race
+ * class as the already-atomic s_running/s_scanning flags. */
+static atomic_bool s_script_loaded = false;
+static atomic_bool s_script_running = false;
+/* Hook-presence cache, refreshed at RUN/STOP so the pipeline can check
+ * without locking the Lua engine per advertisement
+ * (2026-08-16 eval response). */
+static atomic_bool s_has_on_adv = false;
+static atomic_bool s_has_transform = false;
+/* L-S3-5 fix: s_upload.buffer doubles as a cache of the last saved script,
+ * so script_run() doesn't re-read LittleFS on every call. Invalidated as
+ * soon as a new upload starts touching the buffer. */
+static bool s_cache_valid = false;
+
+/* ---- Upload API ---- */
+
+int script_upload_begin(void)
+{
+    if (s_upload.active) {
+        return -611;
+    }
+
+    s_upload.active = true;
+    s_upload.total_received = 0;
+    s_upload.last_chunk_tick = xTaskGetTickCount();
+    memset(s_upload.buffer, 0, sizeof(s_upload.buffer));
+    s_cache_valid = false;  /* buffer is about to be overwritten (L-S3-5 fix) */
+
+    printf("Script: upload begin\n");
+    return 0;
+}
+
+int script_upload_chunk(const uint8_t *data, uint16_t len)
+{
+    if (!s_upload.active) {
+        return -611;
+    }
+    if (data == NULL) {
+        return -602;
+    }
+
+    /* Check timeout — compare in tick domain so the tick→ms multiplication
+     * can never overflow (M-S3-5 fix) */
+    uint32_t now = xTaskGetTickCount();
+    if ((now - s_upload.last_chunk_tick) > pdMS_TO_TICKS(SCRIPT_UPLOAD_TIMEOUT_MS)) {
+        s_upload.active = false;
+        printf("Script: upload timeout\n");
+        return -605;
+    }
+
+    /* Check size limit — reserve one byte for the null terminator so
+     * upload_end can always terminate in-buffer without truncating the
+     * script (L-S3-6 fix: exact-max uploads lost their last byte) */
+    if (s_upload.total_received + len > SCRIPT_MAX_SIZE - 1) {
+        s_upload.active = false;
+        printf("Script: upload exceeds %u bytes\n", (unsigned)(SCRIPT_MAX_SIZE - 1));
+        return -603;
+    }
+
+    memcpy(s_upload.buffer + s_upload.total_received, data, len);
+    s_upload.total_received += len;
+    s_upload.last_chunk_tick = now;
+
+    return 0;
+}
+
+int script_upload_end(char *err_buf, uint16_t err_len)
+{
+    if (!s_upload.active) {
+        return -611;
+    }
+
+    s_upload.active = false;
+
+    if (s_upload.total_received == 0) {
+        printf("Script: empty upload rejected\n");
+        return -612;
+    }
+
+    /* Null-terminate for Lua — safe because upload_chunk reserves one byte
+     * (total_received <= SCRIPT_MAX_SIZE - 1 always holds) */
+    s_upload.buffer[s_upload.total_received] = '\0';
+
+    /* Trial compile to catch syntax errors — does NOT execute (B-S3-3 fix) */
+    char local_err[128] = {0};
+    char *err_dst = (err_buf != NULL && err_len > 0) ? err_buf : local_err;
+    uint16_t err_dst_len = (err_buf != NULL && err_len > 0)
+        ? err_len : (uint16_t)sizeof(local_err);
+    int ret = lua_engine_compile_check((const char *)s_upload.buffer,
+                                       err_dst, err_dst_len);
+    if (ret != 0) {
+        printf("Script: compile error: %s\n", err_dst);
+        return -612;
+    }
+
+    /* Save to LittleFS */
+    ret = storage_write_file(SCRIPT_PATH, s_upload.buffer, s_upload.total_received);
+    if (ret != 0) {
+        printf("Script: storage write failed (%d)\n", ret);
+        return -704;
+    }
+
+    atomic_store(&s_script_loaded, true);  /* B1 fix: atomic (read by pipeline task) */
+    s_cache_valid = true;  /* buffer content == saved file (L-S3-5 fix) */
+    printf("Script: saved %u bytes to %s\n", (unsigned)s_upload.total_received, SCRIPT_PATH);
+    return 0;
+}
+
+int script_upload_abort(void)
+{
+    if (!s_upload.active) {
+        return 0;  /* nothing to abort */
+    }
+
+    s_upload.active = false;
+    s_upload.total_received = 0;
+    memset(s_upload.buffer, 0, sizeof(s_upload.buffer));
+    /* Buffer no longer mirrors any saved file; script_run() falls back
+     * to reading the persisted script (L-S3-5 cache contract). */
+    s_cache_valid = false;
+    printf("Script: upload aborted\n");
+    return 0;
+}
+
+int script_run(void)
+{
+    if (!atomic_load(&s_script_loaded)) {
+        return -611;
+    }
+    if (atomic_load(&s_script_running)) {
+        return 0; /* already running */
+    }
+
+    /* Use the upload buffer as a cache of the saved script (L-S3-5 fix —
+     * avoids re-reading LittleFS on every run). The cache is invalidated
+     * by script_upload_begin(), so after an interrupted/failed upload we
+     * fall back to reading the persisted file.
+     * Read into SCRIPT_MAX_SIZE - 1 to always leave room for the
+     * terminator (prevents an OOB write at buffer[read_len]). */
+    if (!s_cache_valid) {
+        uint32_t read_len = 0;
+        int ret = storage_read_file(SCRIPT_PATH, s_upload.buffer,
+                                    SCRIPT_MAX_SIZE - 1, &read_len);
+        if (ret != 0) {
+            printf("Script: read failed (%d)\n", ret);
+            return ret;
+        }
+        s_upload.buffer[read_len] = '\0';
+        s_cache_valid = true;
+    }
+
+    /* Execute the script to define functions */
+    char err_buf[128] = {0};
+    int ret = lua_engine_exec((const char *)s_upload.buffer, err_buf, sizeof(err_buf));
+    if (ret != 0) {
+        printf("Script: run failed (%d): %s\n", ret, err_buf);
+        return ret;
+    }
+
+    atomic_store(&s_script_running, true);  /* B1 fix: atomic (read by pipeline task) */
+    atomic_store(&s_has_on_adv, lua_engine_has_func("on_adv") == 1);
+    atomic_store(&s_has_transform, lua_engine_has_func("transform") == 1);
+    printf("Script: running\n");
+    return 0;
+}
+
+int script_stop(void)
+{
+    if (!atomic_load(&s_script_running)) {
+        return 0;
+    }
+
+    /* Clear the flag first so the pipeline stops invoking hooks, then remove
+     * the hook functions from the Lua global table. Per spec (Script Stop),
+     * the compiled script is released from the engine — without this, stale
+     * hooks lingered in globals after stop (M-S3-3 fix). */
+    atomic_store(&s_script_running, false);  /* B1 fix */
+    lua_engine_clear_func("on_adv");
+    lua_engine_clear_func("transform");
+    atomic_store(&s_has_on_adv, false);
+    atomic_store(&s_has_transform, false);
+
+    printf("Script: stopped\n");
+    return 0;
+}
+
+bool script_is_loaded(void)
+{
+    return atomic_load(&s_script_loaded);
+}
+
+bool script_is_running(void)
+{
+    return atomic_load(&s_script_running);
+}
+
+bool script_has_on_adv(void)
+{
+    return atomic_load(&s_has_on_adv);
+}
+
+bool script_has_transform(void)
+{
+    return atomic_load(&s_has_transform);
+}
