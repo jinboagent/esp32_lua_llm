@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Dongle That Writes Its Own Tools: An ESP32-S3 BLE Lab Operated by an LLM</title>
+<meta name="author" content="bo li">
+<meta name="description" content="Architecture walkthrough of an ESP32-S3 BLE sniffer dongle that streams strict JSON over USB while an LLM host analyzes the traffic and deploys sandboxed Lua tools back to the device.">
+<!--
+  HOW TO PUBLISH ON MEDIUM
+  1. Commit this page TOGETHER WITH the img/ folder (the <img> tags use
+     relative paths), then host it — GitHub Pages: repo Settings → Pages →
+     Deploy from branch → pick the branch and /article folder. Any static
+     host works (Netlify Drop also takes the whole folder).
+  2. On Medium: story → "Import a story" (medium.com/p/import) → paste the
+     public URL of this page. Medium converts H1/H2/P/PRE/BLOCKQUOTE/LIST
+     and pulls every <img> into the story (the figure captions come along
+     too). All content uses import-safe elements — no tables.
+  3. Review the draft, then publish. Medium links back to the hosted page
+     as the canonical source.
+  NOTE: the repo URL below is the current origin. If you publish the
+  cleaned public repo at a different address, update the links.
+-->
+<style>
+  /* Preview-only styling; Medium's importer ignores this. */
+  body { max-width: 46rem; margin: 2rem auto; padding: 0 1.25rem;
+         font-family: Georgia, 'Times New Roman', serif; line-height: 1.65;
+         color: #1a1a1a; background: #fff; }
+  h1, h2, h3 { font-family: 'Segoe UI', Helvetica, Arial, sans-serif; }
+  figure { margin: 1.75rem 0; }
+  figure img { max-width: 100%; height: auto; border: 1px solid #e2e8ec; border-radius: 6px; }
+  figcaption { font-size: 0.88rem; color: #5b6b78; margin-top: 0.5rem; text-align: center; }
+  pre { background: #f4f6f8; padding: 1rem; overflow-x: auto; border-radius: 6px;
+        font-size: 0.85rem; line-height: 1.45; }
+  code { font-family: Consolas, 'Courier New', monospace; }
+  p > code, li > code { background: #f0f2f4; padding: 0.1em 0.35em; border-radius: 4px; }
+  blockquote { border-left: 4px solid #0e7490; margin: 1.5rem 0; padding: 0.25rem 1rem;
+               color: #35505c; }
+</style>
+</head>
+<body>
+<article>
+
+<h1>The Dongle That Writes Its Own Tools: An ESP32-S3 BLE Lab Operated by an LLM</h1>
+
+<p><em>A five-dollar ESP32-S3 passively sniffs BLE traffic and streams strict JSON lines over USB. On the host side, an LLM reads that traffic, answers your questions, writes Lua code, defines its own tools, and deploys them back to the dongle — sandboxed, confirm-gated, and verified live on real hardware. This article explains the system, the data flow, and — from a user's point of view — what you can actually do with it.</em></p>
+
+<p>Debugging Bluetooth Low Energy devices is oddly manual. You either buy a proprietary sniffer, fight Wireshark captures, or write a throwaway parser script for every new device you meet. And when you want the firmware itself to filter or interpret traffic differently, you are back on the bench: rebuild, reflash, retest.</p>
+
+<p>This project takes a different bet: put a <strong>Lua sandbox on a cheap radio</strong>, and put an <strong>LLM on the host side</strong> where it can extend its own instrumentation. The dongle keeps watch; the model reads the traffic; new tooling ships over USB in seconds instead of reflash cycles. The whole loop — capture, analyze, generate, deploy, observe — runs against real hardware today, and every claim in this article is backed by a check in a 300+ test harness.</p>
+
+<blockquote><p><strong>TL;DR:</strong> ESP32-S3 firmware (C, ~5.7k lines + vendored Lua 5.4) turns BLE adverts into ≤512-byte JSON lines over USB CDC. Three self-contained Python tools put an OpenAI-compatible LLM in the loop: you <strong>chat with it about live traffic</strong>, it <strong>writes and deploys Lua filters</strong> behind your confirmation, it can <strong>define and run its own Lua tools on the dongle</strong>, and a physics demo proves the loop — the LLM estimates a simulated sensor's time constant to within 5% of ground truth.</p></blockquote>
+
+<figure>
+  <img src="img/system-architecture.png" alt="System architecture: LLM on the PC, host tools, USB CDC link, ESP32-S3 dongle, BLE client device">
+  <figcaption>The system in one picture: an LLM sits on the host PC, talks to your dongle over USB CDC, and the dongle's radio does the actual BLE work.</figcaption>
+</figure>
+
+<h2>What it looks like from your side</h2>
+
+<p>Before the internals: as a user you touch this system at exactly three places, and everything else exists to make those three good.</p>
+
+<p><strong>1. You type to the dongle console</strong> (any serial terminal — PuTTY, <code>screen</code>, the bundled monitor). Input: plain text commands like <code>SCAN START</code> or <code>FILTER ADD RSSI -70</code>. Output: one strict-JSON line per command, plus a live stream of JSON events for every BLE advertisement — readable by you, by scripts, and by the LLM.</p>
+
+<p><strong>2. You run the host tools</strong> (plain Python command lines). Input: a port name, a goal in English, case flags. Output: capture files, generated Lua scripts, graded estimates, session transcripts.</p>
+
+<p><strong>3. You talk to the LLM.</strong> This is the main interface, and the reason the project exists. You type an ordinary question — <em>"which devices around me are Apple?"</em>, <em>"keep only my two sensors"</em>, <em>"what's the average RSSI of the plant sensor?"</em> — and the model answers, asks you follow-up questions when you were ambiguous, proposes Lua code, or executes tool calls on the dongle. You approve every code deploy; tool calls within a bounded budget run autonomously.</p>
+
+<p>So the contract with you is simple: <strong>text in, JSON and answers out.</strong> Everything below explains what makes that trustworthy.</p>
+
+<h2>The dongle: one packet's journey</h2>
+
+<p>The firmware is an ESP-IDF v5.1 project with one component per concern, communicating only through public headers in <code>interfaces/*_if.h</code> — that contract layer is why parallel AI agents could extend this codebase for months without stepping on each other.</p>
+
+<ul>
+<li><strong><code>usb</code></strong> — USB-Serial/JTAG console: line I/O, Ctrl+C interrupt path</li>
+<li><strong><code>ble</code></strong> — NimBLE observer (passive scan, dedup) + optional GATT central</li>
+<li><strong><code>proto</code> / <code>json_enc</code></strong> — AD-structure parsing and the JSON line encoder</li>
+<li><strong><code>filter</code></strong> — up to 16 C filter rules evaluated on the hot path</li>
+<li><strong><code>lua</code></strong> — Lua 5.4 sandbox on a 128 KB static pool; hooks, tool packs, <code>hw.*</code> bindings</li>
+<li><strong><code>cli</code></strong> — command dispatch behind IDLE / SCANNING / SCRIPT_RUNNING state guards</li>
+<li><strong><code>bridge</code> / <code>storage</code> / <code>power</code></strong> — script/pack upload scanning, LittleFS, light-sleep power management</li>
+</ul>
+
+<figure>
+  <img src="img/data-flow-packet-journey.png" alt="Data flow: NimBLE observer, dedup, AD parse, C filter, Lua hook, JSON encode, USB TX — plus the GATT connection plane">
+  <figcaption>The data flow. Every advertisement walks this pipeline left to right; the second row is the optional GATT connection plane that turns the dongle from observer into client.</figcaption>
+</figure>
+
+<p>Every advertisement takes the same journey: NimBLE observer (passive, continuous) → dedup (FNV-1a, ~1 s window) → AD parse → C filter engine → <em>[Lua <code>on_adv</code> hook: keep/drop]</em> → JSON encode → <em>[Lua <code>transform</code> hook]</em> → USB console TX. A second, optional plane connects the dongle to <strong>one</strong> GATT peer — subscribe to its notifications, or fall back to polling reads — and re-streams that data as <code>"src":"conn"</code> lines on the same USB stream.</p>
+
+<p>The invariants are the unglamorous part that makes the rest possible: a zero-malloc hot path, one TX mutex so lines never interleave, per-module numeric error codes, and a state machine that rejects mistimed commands with <code>-911</code>. Ctrl+C (0x03) is polled even inside the connection worker — no command can lock the console.</p>
+
+<h2>A wire contract an LLM can trust</h2>
+
+<figure>
+  <img src="img/wire-contract.png" alt="Sequence diagram: host sends text commands, dongle answers JSON lines; sandbox scan rejects bad code with -612">
+  <figcaption>The whole protocol: text lines in, JSON lines out. Every response names the command it answers, so stale lines are never misattributed.</figcaption>
+</figure>
+
+<p>The host link is USB CDC, and the protocol is almost embarrassingly simple:</p>
+
+<pre><code>&gt; SCAN START\r
+&lt; {"cmd":"scan","status":"ok","state":"SCANNING"}
+
+&gt; SCRIPT LOAD
+&gt; print("hello from the model")
+&gt; SCRIPT END
+&lt; {"cmd":"script","status":"loaded"}</code></pre>
+
+<p>Three details matter more than they look.</p>
+
+<p><strong>Every response carries a <code>cmd</code> field</strong> — when an agent interrupts a running script and fires the next command, stale response lines may still drain; the <code>cmd</code> field means an old answer can never be mistaken for a new one. <strong>Errors are numbers, not prose</strong> — each module owns a 100-wide negative range (Lua sandbox <code>-6xx</code>, CLI <code>-9xx</code>…), so a program — or a model — can branch on failure precisely. And <strong>uploaded code is scanned per line, fail-closed</strong>: <code>os.</code>, <code>io.</code>, <code>require</code> and friends are rejected with <code>-612</code> before they ever reach the interpreter. The device, not the host, has the final word on what runs.</p>
+
+<h2>The host-side LLM: the actual product</h2>
+
+<p>Here is the part to emphasize, because it is the reason for everything above: <strong>the LLM is not a gimmick bolted onto the side — it is the primary interface.</strong> The three Python host tools exist to give the model clean context and safe actuators.</p>
+
+<figure>
+  <img src="img/host-llm-loop.png" alt="Block diagram: dongle JSON lines + user console input enter the MESSAGE Prompt, context assembly builds one request, the cloud LLM replies in typed envelopes routed back as answers, gated Lua, or capped tool programs">
+  <figcaption>The host-LLM loop: two inputs (device + you), one prompt, one assembled context, and four kinds of typed replies — routed to you, through the human gate, or back into the next context.</figcaption>
+</figure>
+
+<p><strong>What the model sees.</strong> A rolling snapshot of both data planes — the latest deduplicated advertisement lines and the latest connection-plane samples — refreshed every conversational turn, plus the tool registry (below) and your conversation. The sample is capped (20 adv + 30 conn lines) to bound token cost.</p>
+
+<p><strong>What you can ask it.</strong> Anything about the live traffic: <em>"what devices are around me?"</em>, <em>"is my sensor's signal getting weaker?"</em>, <em>"summarize the manufacturers I can see"</em>. It answers in a typed envelope:</p>
+
+<ul>
+<li><code>answer</code> — a plain answer, grounded in the snapshot;</li>
+<li><code>clarify</code> — <em>you</em> were ambiguous ("keep only my devices" — which ones?), so it asks before acting;</li>
+<li><code>lua</code> — it proposes code: a filter, a transform, or a tool pack, deployed only after <code>deploy? [y/N]</code>;</li>
+<li><code>error</code> — something failed (provider, device); the session survives and the failure is shown to you <em>and</em> fed back to the model as a hint.</li>
+</ul>
+
+<p><strong>What the model can do on its own.</strong> With a tool registry loaded, it can go beyond answering: given a question about live data, it may write a small Lua <em>tool program</em> composing registered tools and execute it on the dongle, read the result, and continue — up to <strong>three consecutive executions per turn</strong>, then it must answer in plain text. This "generate-and-execute" loop is what turns the dongle into a self-extending instrument.</p>
+
+<p><strong>How you stay in control.</strong> Four gates, in order: strict typed-envelope parsing (one escape-focused retry); the human <code>deploy? [y/N]</code> gate for every script/hook deploy — and an optional <code>--mutating-gate</code> that extends confirmation to tool programs that mutate hardware state; the per-line sandbox scan on upload; and the on-device whitelist sandbox as the final authority. Bounded autonomy for tool calls; explicit consent for everything that changes what the pipeline does.</p>
+
+<figure>
+  <img src="img/tool-registry-loop.png" alt="Tool registration flow and the cap-3 generate-and-execute loop">
+  <figcaption>The tool registry. Top: how a pack registers (manifests fetched in chunks, collisions rejected before any device byte is sent). Bottom: the cap-3 execution loop the LLM runs.</figcaption>
+</figure>
+
+<p><strong>Defining tools: the Lua tool registry.</strong> A <em>tool pack</em> is a plain Lua file where every line is one complete statement ≤240 bytes (so it rides the existing single-line transport with zero firmware changes), every tool takes <strong>one table argument</strong> and returns a string, and a <code>manifest()</code> function advertises the API — name, doc, typed args, example, and a <code>mutating</code> flag:</p>
+
+<pre><code>-- every tool: ONE table argument, returns a string
+function mean(a)
+  local s = 0
+  for _, v in ipairs(a.numbers) do s = s + v end
+  return string.format("%.3f", s / #a.numbers)
+end
+
+function manifest()
+  return '{"version":1,"name":"demo","tools":'
+      .. '[{"name":"mean","doc":"mean of numbers",'
+      .. '"args":[{"name":"numbers","type":"table"}]}]}'
+end</code></pre>
+
+<p>Load it from the assistant with <code>/tools load demo.lua</code> — done, the tool is callable by you and by the model. Packs can be persisted to flash and marked <code>autorun</code>, so your tools are alive on every boot with no PC attached. Device-side <code>hw.*</code> bindings (GPIO write/read, 12-bit ADC, a small persistent key-value store) let packs touch the physical world; the kv store even survives reboots.</p>
+
+<h2>The interfaces you can call</h2>
+
+<p>The complete user-facing surface, condensed. On the console (input → what you get back):</p>
+
+<ul>
+<li><strong>You send <code>SCAN START/STOP</code>, <code>SCAN INTERVAL ms</code></strong> — you get JSON advertisement lines streaming, plus scan state</li>
+<li><strong>You send <code>FILTER ADD NAME/UUID/RSSI/MAC …</code></strong> — only matching devices stream (≤16 rules, AND/OR logic)</li>
+<li><strong>You send <code>SCRIPT LOAD → lines → SCRIPT END</code>, then <code>SCRIPT RUN/STOP</code></strong> — <code>on_adv</code>/<code>transform</code> hooks join the pipeline</li>
+<li><strong>You send <code>LUA EXEC code</code> or <code>LUA BEGIN … LUA END</code></strong> — one-liner or 4 KB chunk results, immediately</li>
+<li><strong>You send <code>PACK BEGIN name [autorun] → lines → PACK END</code></strong> — a tool pack stored in flash, optional boot autorun</li>
+<li><strong>You send <code>CONN TARGET/START/STOP/INTERVAL …</code></strong> — one GATT peer's data arrives as <code>"src":"conn"</code> lines</li>
+<li><strong>You send <code>POWER SLEEP ON/OFF</code>, <code>STATUS</code>, <code>VERSION</code> — or <code>Ctrl+C</code></strong> — power policy; a full health blob; a universal interrupt</li>
+</ul>
+
+<p>In the assistant session (the LLM chat):</p>
+
+<ul>
+<li><strong>Free text — any question about live traffic</strong> → an <code>answer</code> / <code>clarify</code> / <code>lua</code> envelope from the model</li>
+<li><strong><code>y</code> at a <code>deploy? [y/N]</code> prompt</strong> → the proposed Lua is uploaded and run (sandbox-scanned)</li>
+<li><strong><code>/tools load file.lua</code> · <code>/tools persist name autorun</code></strong> → register a tool pack · persist it to flash</li>
+<li><strong><code>/scan on|off</code> · <code>/conn on|off|status</code> · <code>/samples</code> · <code>/history</code></strong> → drive both data planes without leaving the chat</li>
+</ul>
+
+<p>From the shell (batch and scripted use):</p>
+
+<pre><code>python llm_loop.py COM12 loop --secs 8 --goal "keep only my Sensor_* devices"
+python host_app/assistant.py COM12            # the interactive chat
+python host_app/run_case.py COM12 --case first_order --estimate
+python host_app/assistant.py COM12 --no-llm   # mechanics without any API key</code></pre>
+
+<p>Any OpenAI-compatible endpoint works — OpenAI, Qwen/DashScope, DeepSeek, OpenRouter, local Ollama. Credentials live in a gitignored <code>.llm_env</code> (template: <code>.llm_env.example</code>); a rejected key or an Aliyun-dialect URL self-heals with an announced retry.</p>
+
+<h2>The demo that makes it concrete: estimating a time constant</h2>
+
+<p>The clearest answer to <em>"what can this system actually do?"</em> is the first-order plant case. One command:</p>
+
+<pre><code>python host_app/run_case.py COM12 --case first_order --tau 10 --step-at 5 --secs 60 --estimate</code></pre>
+
+<p>What happens, step by step:</p>
+
+<ol>
+<li><strong>Your PC becomes a BLE sensor.</strong> A GATT server (Windows WinRT) advertises a service and serves measurements of a simulated first-order plant: <code>y' = (K·u − y)/τ</code>, with the input <code>u</code> stepping from 0 to 1 at t = 5 s. (In GATT, the <em>server</em> is the side that holds — here, generates — the data; the dongle connects to it as the client.) This <strong>host-side BLE simulation</strong> is a feature in its own right — reproducible radio traffic with known ground truth, no second device needed.</li>
+<li><strong>The dongle auto-connects</strong> by the advertised service UUID and starts receiving the measurements, which it re-streams to the host as <code>"src":"conn"</code> JSON lines into a capture file.</li>
+<li><strong>The LLM gets the raw capture</strong> — just the JSONL samples, nothing else — and must answer in JSON: what is the time constant τ of this sensor?</li>
+<li><strong>The harness grades the answer</strong> against physics, not opinions: at t = <code>step_at + τ</code> a first-order step response must reach 63.2% of K, and the estimate must land within ±30% of the configured truth.</li>
+</ol>
+
+<p>The recorded live run: <strong>60/60 lines captured, and the LLM's estimate was τ̂ = 9.5 against the configured τ = 10.0</strong> — a −5% error, derived by the model from raw samples alone. A harder variant, <code>--case first_order_poll</code>, makes the characteristic read-only so subscribing is impossible; the dongle detects this and falls back to polling reads — and the case still passes end to end.</p>
+
+<figure>
+  <img src="img/demo-first-order.png" alt="First-order plant demo: PC simulates the plant over GATT, dongle re-streams 60/60 lines, LLM estimates tau 9.5 vs 10.0 — PASS">
+  <figcaption>The closed loop, graded: PC-simulated plant → dongle connection plane → LLM estimate → physics-checked verdict.</figcaption>
+</figure>
+
+<p>Why this demo matters: it exercises simulation (host), radio (connect/subscribe/poll), transport (JSON lines), and intelligence (the estimate) in one measurable loop. When you change anything in the stack, this is the experiment that tells you whether the product still works.</p>
+
+<h2>Trust is a test suite</h2>
+
+<figure>
+  <img src="img/test-inventory.png" alt="Bar chart of the test inventory and the one-command hardware gate flow">
+  <figcaption>The check inventory and the one-command hardware gate: wrong firmware version stops everything, and an unexpected reboot after any suite fails the run.</figcaption>
+</figure>
+
+<ul>
+<li><strong>160 Unity C tests</strong> host-built (unit + response contract + fuzz) — every documented CLI response is strict-JSON validated; the fuzzer's first run found three real encoder defects.</li>
+<li><strong>198 python checks</strong> across the three host tools (153 on the assistant alone), including whole-REPL sessions over a device simulator.</li>
+<li><strong>167 hardware checks</strong> in suites driven over the real COM port, behind one command (<code>python tests/hw/run_all_hw.py</code>) that asserts the firmware version first, tees every transcript, and checks the chip's <code>reset_reason</code> after <em>each</em> suite — an unexpected reboot fails the gate.</li>
+<li><strong>Soaks</strong>: two-hour advertisement runs watching the Lua pool, and connection soaks reconnecting every 300 s.</li>
+</ul>
+
+<p>The project is also a case study in AI-native development: a machine-facing project brief, numbered design decisions in proposals, a second model reviewing code before merges, and a branch ritual where merges are decided by the hardware gate — never by confidence.</p>
+
+<h2>Roadmap, and how to try it</h2>
+
+<ul>
+<li><strong>Next for the tool registry:</strong> more <code>hw.*</code> bindings, richer mutating-tool workflows, native function-calling on models that support it.</li>
+<li><strong>Portability:</strong> the firmware is plain ESP-IDF — it already runs on other ESP32-S3 boards (voice/OLED dev boards included).</li>
+</ul>
+
+<p>The repo builds with stock ESP-IDF v5.1, the C tests run host-side with gcc or MinGW, and the hardware suites need only the dongle on a COM port:</p>
+
+<pre><code>git clone https://github.com/jinboagent/esp32_lua_llm.git
+cd esp32_lua_llm
+scripts\build.bat &amp;&amp; scripts\flash.bat        :: firmware
+cmake -S tests/host -B build/host -G Ninja &amp;&amp; cmake --build build/host
+build\host\test_runner.exe                      :: 160 C tests
+python tests/hw/run_all_hw.py                   :: hardware gate
+python host_app\assistant.py COM12              :: start chatting</code></pre>
+
+<p>If you have ever wanted an LLM that actually touches hardware — with guardrails worth trusting — this is a small, complete example of how to build one.</p>
+
+<p><em>The repository: <a href="https://github.com/jinboagent/esp32_lua_llm">github.com/jinboagent/esp32_lua_llm</a> — firmware, host tools, tests, user guides (<code>docs/features.zcode.md</code>, <code>docs/user-guide.zcode.md</code>, <code>docs/demo-first-order.zcode.md</code>), and a 17-slide architecture deck. Thanks for reading.</em></p>
+
+</article>
+</body>
+</html>
