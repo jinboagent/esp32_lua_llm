@@ -1,0 +1,115 @@
+# ESP-IDF build output
+build/
+build_output.txt
+
+# Host test build output
+tests/host/build/
+
+# SDK config (auto-generated from sdkconfig.defaults)
+sdkconfig
+sdkconfig.old
+
+# ESP-IDF managed components (auto-downloaded by component manager)
+managed_components/
+
+# Compiled binaries
+*.bin
+*.elf
+*.map
+*.o
+*.a
+
+# IDE / editor
+.vscode/
+.clangd
+
+# AI tools
+.aider*
+.qwen/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+#Debug Log
+trace/
+
+# Session logs / test output
+build_check.txt
+flash_check.txt
+tests/host/build_log.txt
+hw_bridge_out.txt
+hw_power_out.txt
+hw_script_out.txt
+hw_lua_out.txt
+host_build.txt
+host_test.txt
+hw_ble_scan_out.txt
+hw_status_out.txt
+hw_capture_out.txt
+hw_repro_out.txt
+hw_reset_out.txt
+hw_isolate_out.txt
+hw_uptime_probe.txt
+hw_crlf_out.txt
+hw_sim_out.txt
+hw_blelua_out.txt
+soak_out.txt
+
+# llm_loop.py run artifacts
+adv_capture.jsonl
+llm_script.lua
+
+# LLM credentials (local only, never commit)
+.llm_env
+
+# zai-session scratch (build dirs, off-config, sensor pilot capture)
+build_off/
+build_zai.bat
+sdkconfig.off
+tests/host/build_zai/
+pilot_p0_smoke.jsonl
+hw_peer_out.txt
+build_off_check.txt
+plant_capture.jsonl
+/assistant_*.log
+
+# PPTX deck (PowerPoint sharing/): sources committed, artifacts regenerate
+PowerPoint sharing/node_modules/
+PowerPoint sharing/render*/
+PowerPoint sharing/~$*
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+node_modules/
+bower_components/
+jspm_packages/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

@@ -35,6 +35,8 @@ ESP32-S3 passive BLE advertisement scanner → AD parse → C filters → option
 - **Never commit directly to master**; one feature per branch, cut from a registered baseline (master today); every feature branch carries a root `BRANCH.zcode.md` manifest (feature, baseline + cut commit, status, ACs, changelog) and every squash-merge updates the root `FEATURES.zcode.md` index (policy: `docs/workflow-feature-branches-2026-09-03.zcode.md`, `harness/00-global-context/git_workflow.md`); keep the branch after merge; every significant session leaves a process report + evidence in `harness/02-knowledge/`
 - **ASCII charts are registered** (`docs/chart-registry.zcode.md`): every diagram carries a `chart-id:` marker + a tracking row (hash + rev). Changed a chart → paste the new snapshot into its catalog section, bump rev/date/sha8, run `python scripts/check_charts.py` (must stay clean)
 
+- **Language & privacy**: repo docs, comments and public-facing images are English-only; only the orphan `release` branch ever goes public (dev history carries a personal email — never push master); `.llm_env` never committed — rules: `harness/00-global-context/publishing_privacy.zcode.md` + `harness/00-global-context/documentation_rules.zcode.md`
+
 ## Build & Test
 
 ```
@@ -79,7 +81,7 @@ python tests/hw/soak_conn.py --secs 3600 --reconnect-every 300   # conn soak
 | `host_app/` + `llm_loop.py` | Stage-5 host tooling (self-contained scripts) |
 | `tests/host/` | Unity C suite + python unit tests for the host tools |
 | `tests/hw/` | pyserial/WinRT hardware suites (COM12) |
-| `harness/00-global-context/` | Product spec, coding rules, build env, git workflow |
+| `harness/00-global-context/` | Product spec, coding rules, build env, git workflow, publishing/privacy + documentation rules |
 | `harness/01-features/` | Per-feature specs incl. `stage5-host/` (H5.1–H5.3) and `stage6-agent/` (H6.1 tool registry M1–M4) |
 | `harness/02-knowledge/` | Process reports + run-transcript evidence (the WHY behind commits) |
 | `bug_check/README.md` | Consolidated bug tracking |

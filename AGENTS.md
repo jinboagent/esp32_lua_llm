@@ -30,7 +30,7 @@ take ONE table arg with named fields.
 | `main/main.c` | Init chain + USB command loop |
 | `host_app/` + `llm_loop.py` | Stage-5 host tooling (self-contained scripts) |
 | `tests/host/`, `tests/hw/` | Unity C + python unit suites; pyserial/WinRT hardware suites |
-| `harness/00-global-context/` | Product spec, coding rules, build env, git workflow |
+| `harness/00-global-context/` | Product spec, coding rules, build env, git workflow, publishing/privacy + documentation rules |
 | `harness/01-features/` | Per-feature specs (`stage5-host/`, `stage6-agent/`) |
 | `harness/02-knowledge/` | Process reports + run-transcript evidence (the WHY behind commits) |
 | `docs/` | Proposals, workflow policy, commit-message standard |
@@ -102,6 +102,12 @@ scripts\build.bat && scripts\flash.bat
   (`*.zcode.md` for ZCode, `*-deepseek.md` for DeepSeek) plus an author line.
   Never rename or delete committed docs.
 - Before changing sensitive areas, read first: `harness/00-global-context/`
-  (coding rules, build env, git workflow), the matching spec under
+  (coding rules, build env, git workflow, publishing/privacy rules,
+  documentation/language rules), the matching spec under
   `harness/01-features/`, and `status/LATEST.md` + `BRANCH.zcode.md` for
-  current state (e.g. H6.1 M1–M4 sits unmerged on `Lua_tool_extension_dev`).
+  current state (e.g. master fast-forwarded to the H6.1 tip on 2026-09-28;
+  the public snapshot lives on the orphan `release` branch).
+- Repo docs, comments and public-facing images are English-only, and
+  nothing that ships may carry credentials or personal info. Details:
+  `harness/00-global-context/documentation_rules.zcode.md` +
+  `harness/00-global-context/publishing_privacy.zcode.md`.
