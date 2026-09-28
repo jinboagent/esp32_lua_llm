@@ -8,6 +8,7 @@ the dongle auto-connects by service UUID and re-streams the values as
 against the configured ground truth (not vibes).
 
   PC plant (this file)                     dongle (unchanged firmware)
+  chart-id: CH-runcase-py-01 rev1
   ┌──────────────────┐  GATT notify        ┌──────────────────────────┐
   │ y += (T/τ)(Ku−y) │ ──────────────────▶ │ ble_conn: subscribe,     │
   │ payload {"t","u","y"}                  │ json_encode_conn (merge) │

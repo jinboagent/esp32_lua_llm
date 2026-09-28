@@ -54,6 +54,7 @@ Scripts can be stopped at any time. A script error (compile or runtime) does not
 
 ### Sequence
 
+<!-- chart-id: CH-luascript-md-01 rev1 -->
 ```
 Host                          Dongle
   |                              |

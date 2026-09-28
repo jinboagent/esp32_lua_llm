@@ -29,6 +29,7 @@ Implements power-saving strategies for the BLE sniffer dongle:
 
 ### Power States
 
+<!-- chart-id: CH-power-md-01 rev1 -->
 ```
   ACTIVE ──(idle timeout)──▶ LIGHT_SLEEP ──(timer/USB)──▶ ACTIVE
      │                                                       │

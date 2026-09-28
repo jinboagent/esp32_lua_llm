@@ -18,6 +18,7 @@ dongle, have an LLM generate a Lua filter/transform script for the captured
 environment, deploy it over the F4.2 upload protocol, and verify the cleaned
 output stream. The firmware is untouched; this feature is purely host-side.
 
+<!-- chart-id: CH-llmloop-md-01 rev1 -->
 ```
   SCAN START ─▶ collect adv JSON ─▶ LLM generates Lua ─▶ SCRIPT LOAD/END
        ▲                                                       │

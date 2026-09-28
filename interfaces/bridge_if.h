@@ -14,6 +14,7 @@ extern "C" {
  * PC as plain text lines over USB CDC:
  *
  *   PC                            Device
+ * chart-id: CH-bridgeif-h-01 rev1
  *   |-- SCRIPT LOAD ------------->|  bridge_upload_begin  -> "ready"
  *   |-- script line 1 ----------->|  bridge_handle_script_upload (silent)
  *   |-- script line 2 ----------->|  ...

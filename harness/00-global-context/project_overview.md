@@ -8,26 +8,32 @@ On-device Lua 5.4 scripting enables custom filter and transform logic. A PC-side
 
 ## Architecture
 
+<!-- chart-id: CH-ovw-md-01 rev1 -->
 ```
-+---------------------+          +------------------------------------------+
-|  PC / Host          |          |  ESP32-S3-DevKitC-1 (Device)             |
-|                     |          |                                          |
-|  +---------------+  |  USB CDC |  +--------+   +-------+   +----------+  |
-|  | LLM (cloud)   |<-|--------->|  | BLE    |-->| AD    |-->| Filter   |  |
-|  +---------------+  |  JSON     |  | Scan   |   | Parse |   | Engine   |  |
-|         |           |  lines    |  +--------+   +-------+   +----------+  |
-|    generates        |  <--->    |      |                           |      |
-|    Lua scripts      |           |      v                      +----------+ |
-|         |           |           |  +--------+   +-------+   | Pipeline |  |
-|  +---------------+  |           |  | USB    |<--| JSON  |<--| (Lua +   |  |
-|  | Script Deploy |<-|-----------|  | CDC    |   | Encode|   |  output) |  |
-|  +---------------+  |  Lua src  |  +--------+   +-------+   +----------+ |
++---------------------+          +------------------------------------------+ 
+|  PC / Host          |          |  ESP32-S3-DevKitC-1 (Device)             | 
+|                     |          |                                          | 
+|  +---------------+  |  USB CDC |  +--------+   +-------+   +----------+  |  
+|  | LLM (cloud)   |<-|--------->|  | BLE    |-->| AD    |-->| Filter   |  |  
+|  +---------------+  |  JSON     |  | Scan   |   | Parse |   | Engine   |  | 
+|         |           |  lines    |  +--------+   +-------+   +----------+  | 
+|    analyzes         |  <--->    |      |                           |      | 
+|    writes Lua       |           |      v                      +----------+ |
+|         |           |           |  +--------+   +-------+   | Pipeline |  | 
+|  +---------------+  |           |  | USB    |<--| JSON  |<--| (Lua +   |  | 
+|  | Script Deploy |<-|-----------|  | CDC    |   | Encode|   |  output) |  | 
+|  +---------------+  |  Lua src  |  +--------+   +-------+   +----------+ |  
 |                     |           |                                          |
-|  +---------------+  |           |  +--------+                             |
-|  | JSON Viewer / |  |           |  |LittleFS|  (script + config store)    |
-|  | Analysis Tool |  |           |  +--------+                             |
+|  +---------------+  |           |  +--------+                             | 
+|  | Host tools:   |  |           |  |LittleFS|  (scripts, packs, kv)       | 
+|  | assistant.py  |  |           |  +--------+                             | 
+|  | run_case.py   |  |           |                                          |
+|  | llm_loop.py   |  |           |                                          |
 |  +---------------+  |           |                                          |
-+---------------------+          +------------------------------------------+
++---------------------+          +------------------------------------------+ 
+  F2.4 conn plane (optional): BLE Scan -> GATT client ->                      
+    notify / poll -> "src":"conn" lines -> host; its own                      
+    state machine lives in firmware/components/ble/README.md                  
 ```
 
 ## Data Flow
@@ -35,7 +41,7 @@ On-device Lua 5.4 scripting enables custom filter and transform logic. A PC-side
 ```
 BLE radio → NimBLE scan callback → copy raw ADV → FreeRTOS queue
   → AD structure parser → filter engine (C rules + optional Lua)
-  → JSON encoder → USB CDC TX buffer → host
+  → JSON encoder → USB CDC TX buffer → host  (conn plane: GATT client -> "src":"conn" -> host)
 ```
 
 ## LLM Loop

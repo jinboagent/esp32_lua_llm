@@ -58,12 +58,14 @@ static osMutexId_t storage_mutex = NULL;
 
 ## File System Layout
 
+<!-- chart-id: CH-lfs-md-01 rev1 -->
 ```
 /littlefs/
-├── scripts/
-│   ├── script1.lua
-│   ├── script2.lua
-│   └── ...
+├── script.lua                 # F3.2 script slot (SCRIPT LOAD)
+├── packs/                     # H6.1 tool packs + .autorun markers
+│   ├── demo.lua
+│   └── demo.autorun
+├── kv/                        # hw.kv_set / hw.kv_get persistent store
 └── config/
     └── settings.json
 ```

@@ -5,6 +5,7 @@ the dongle's USB JSON lines and the operator's console input. While the
 user thinks, the loop keeps draining the serial port (N3 keep-open), so
 the rolling device buffer stays fresh and the device never blocks.
 
+  chart-id: CH-assist-py-01 rev1
   ESP32 --USB JSON lines--> +--------------------+
  user  --console input---> | message Prompt     | --> context assembly --> cloud LLM
                            | ingress validation |     (history + snapshot)

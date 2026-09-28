@@ -77,6 +77,10 @@ scripts\build.bat && scripts\flash.bat
   for `CONN STATUS state:"off"` before the next conn command.
 - **Host tools are self-contained by design** (copied helpers, no
   cross-imports); shared *conventions*, not shared code.
+- **ASCII charts are registered** (`docs/chart-registry.zcode.md`): each
+  diagram has a `chart-id:` marker + a tracking row (hash + rev). After
+  changing a chart, update its catalog snapshot + row and run
+  `python scripts/check_charts.py` (must stay clean).
 - **LLM credentials** (`.llm_env`, gitignored — never commit): env vars win as
   a UNIT; tools self-heal 401 → file fallback and Aliyun `/api/v1` 404 →
   `/compatible-mode/v1`; `QWEN_ENABLE_THINKING` honored (27B thinks >180s on

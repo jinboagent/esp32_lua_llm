@@ -272,6 +272,7 @@ After each stage completion or significant milestone, reflect on whether the har
 
 ## Workflow Summary
 
+<!-- chart-id: CH-gitwf-md-01 rev1 -->
 ```
 main ──────────────────────────────────────────────────────►
   \                                    \

@@ -24,6 +24,7 @@ mutexes / a spinlock / atomics. NimBLE forces everything BLE-related onto a
 single **host task**; two worker tasks (pipeline, conn) drain queues and format
 JSON; the **main task** is the CLI/control thread.
 
+<!-- chart-id: CH-ble-readme-01 rev1 -->
 ```mermaid
 flowchart LR
     subgraph radio["BLE radio / controller"]
@@ -115,6 +116,7 @@ duration of the handshake.
 
 ## Connection state machine
 
+<!-- chart-id: CH-ble-readme-02 rev1 -->
 ```
 off ──CONN START(auto)──▶ peer_search ──match──▶ connecting ──CONNECT ok──▶ discovering ──CCCD/read──▶ active
  │        ▲                    │                    │                           │                    │
@@ -150,6 +152,7 @@ sequenceDiagram
 **Connection + command path** — `CONN START` posts an op and (for direct starts)
 blocks on `s_start_sem` until the host task finishes discovery:
 
+<!-- chart-id: CH-ble-readme-03 rev1 -->
 ```mermaid
 sequenceDiagram
     participant M as main / CLI task

@@ -35,6 +35,7 @@ analysis loop.
 
 ## Architecture
 
+<!-- chart-id: CH-readme-01 rev1 -->
 ```
                             HOST PC
  +---------------------------------------------------------------------+

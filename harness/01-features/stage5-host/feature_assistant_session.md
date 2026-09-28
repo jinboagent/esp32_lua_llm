@@ -21,6 +21,7 @@ clarification, or produces a Lua artifact that is deployed only on an
 explicit human confirmation. Either party (user *or* LLM) may steer —
 mixed-initiative interaction.
 
+<!-- chart-id: CH-assist-md-01 rev1 -->
 ```
 ESP32 ──USB JSON lines──┐
                         ▼

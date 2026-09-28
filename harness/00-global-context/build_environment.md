@@ -8,6 +8,7 @@ what tools were found, what issues were encountered, and concerns for future ses
 ## 1. ESP-IDF Installation
 
 ### Location
+<!-- chart-id: CH-buildenv-md-01 rev1 -->
 ```
 C:\Espressif\
 ├── idf_cmd_init.bat              ← Environment setup script (run this first)
@@ -57,6 +58,7 @@ that produce code for the ESP32 chip — NOT for running on Windows.
 We needed a native gcc to compile and run unit tests on the PC.
 
 ### Solution: MSYS2 + MinGW-w64
+<!-- chart-id: CH-buildenv-md-02 rev1 -->
 ```
 C:\msys64\                        ← MSYS2 installation
 ├── mingw64\bin\gcc.exe           ← Native x86_64 gcc (installed via pacman)

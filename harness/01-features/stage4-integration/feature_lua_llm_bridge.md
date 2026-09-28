@@ -18,6 +18,7 @@ over USB CDC, validating syntax, and deploying to the Lua engine.
 
 ### Upload Protocol Flow
 
+<!-- chart-id: CH-bridge-md-01 rev1 -->
 ```
   PC                          Device
   │                              │

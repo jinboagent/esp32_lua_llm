@@ -23,17 +23,26 @@ calls `malloc`/`free`.
 
 ### State Machine
 
+<!-- chart-id: CH-cli-md-01 rev1 -->
 ```
  IDLE ──SCAN START──▶ SCANNING ──SCRIPT RUN──▶ SCRIPT_RUNNING
   ▲                     │                            │
   │   SCAN STOP         │   SCAN STOP               │   SCRIPT STOP
   └─────────────────────┴────────────────────────────┘
+
+ outside this machine (no IDLE/SCANNING/SCRIPT_RUNNING guard):
+   PACK BEGIN/LIST/RUN/DEL/AUTORUN · LUA INIT/EXEC/BEGIN/END · POWER *
+   CONN TARGET/STATUS/STOP/INTERVAL — and CONN START, which is refused
+   while SCRIPT_RUNNING; the conn plane has its own state machine
+   (see firmware/components/ble/README.md)
+ Ctrl+C (0x03) interrupts scan/script/upload/conn from any state.
 ```
 
 Commands restricted per state:
 - **IDLE**: all commands available except SCAN STOP, SCRIPT RUN, SCRIPT STOP.
 - **SCANNING**: SCAN START rejected; filter modification rejected; SCRIPT RUN allowed.
 - **SCRIPT_RUNNING**: SCAN START/STOP, FILTER *, SCRIPT RUN rejected; SCRIPT STOP allowed.
+- **CONN START** is also rejected while SCRIPT_RUNNING (conn plane is state-guarded separately).
 
 ## I/O Definitions
 

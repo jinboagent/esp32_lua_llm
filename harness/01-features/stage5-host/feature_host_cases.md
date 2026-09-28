@@ -22,6 +22,7 @@ server, the dongle auto-connects by service UUID and re-streams it as
 capture. With `--estimate`, the capture goes to the cloud LLM and its
 answer is checked against the case's configured ground truth.
 
+<!-- chart-id: CH-hostcases-md-01 rev1 -->
 ```
  PC plant (case)                          dongle (unchanged firmware)
  ┌──────────────────┐  GATT notify        ┌──────────────────────────┐
