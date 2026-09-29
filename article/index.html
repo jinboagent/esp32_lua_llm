@@ -43,18 +43,30 @@
 
 <h1>The Dongle That Writes Its Own Tools: An ESP32-S3 BLE Lab Operated by an LLM</h1>
 
-<p><em>A five-dollar ESP32-S3 dongle bridges BLE devices and a cloud LLM through your PC. The dongle collects advertisement and GATT-connection data and streams strict JSON lines over USB; the host post-processes that stream, enriching it with semantics, and an LLM reads it, answers your questions, writes Lua code, defines its own tools, and deploys them back to the dongle — sandboxed, confirm-gated, and verified live on real hardware. This article explains the system, the data flow, and — from a user's point of view — what you can actually do with it.</em></p>
+<p><em>A five-dollar ESP32-S3 dongle bridges BLE devices and a cloud LLM through your PC. The dongle collects advertisement and GATT-connection data and streams strict JSON lines over USB; the host post-processes that stream, enriching it with semantics, and an LLM reads it, answers your questions, writes Lua code, defines its own tools, and deploys them back to the dongle — closing the loop all the way to the device the data came from. Everything is sandboxed, confirm-gated, and verified live on real hardware. This article explains the system, the data flow, and — from a user's point of view — what you can actually do with it.</em></p>
 
 <p>Debugging Bluetooth Low Energy devices is oddly manual. You either buy a dedicated capture gadget, fight Wireshark captures, or write a throwaway parser script for every new device you meet. And when you want the firmware itself to filter or interpret traffic differently, you are back on the bench: rebuild, reflash, retest.</p>
 
-<p>This project takes a different bet: put a <strong>Lua sandbox on a cheap radio</strong>, and put an <strong>LLM on the host side</strong> where it can extend its own instrumentation. The dongle keeps watch; the model reads the traffic; new tooling ships over USB in seconds instead of reflash cycles. The whole loop — capture, analyze, generate, deploy, observe — runs against real hardware today, and every claim in this article is backed by a check in a 300+ test harness.</p>
+<p>This project takes a different bet: put a <strong>Lua sandbox on a cheap radio</strong>, and put an <strong>LLM on the host side</strong> where it can extend its own instrumentation. The dongle collects; the PC gives the data meaning; the model reads that meaning and writes the code that steers what happens next — and the code ships over USB in seconds instead of a reflash cycle. The whole loop — capture, analyze, generate, deploy, observe — runs against real hardware today, and every claim in this article is backed by a check in a 300+ test harness.</p>
 
 <blockquote><p><strong>TL;DR:</strong> ESP32-S3 firmware (C, ~5.7k lines + vendored Lua 5.4) turns BLE adverts into ≤512-byte JSON lines over USB CDC. Three self-contained Python tools put an OpenAI-compatible LLM in the loop: you <strong>chat with it about live traffic</strong>, it <strong>writes and deploys Lua filters</strong> behind your confirmation, it can <strong>define and run its own Lua tools on the dongle</strong>, and a physics demo proves the loop — the LLM estimates a simulated sensor's time constant to within 5% of ground truth.</p></blockquote>
 
 <figure>
   <img src="img/system-architecture.png" alt="System architecture: LLM on the PC, host tools, USB CDC link, ESP32-S3 dongle, BLE client device">
-  <figcaption>The system in one picture: an LLM sits on the host PC, talks to your dongle over USB CDC, and the dongle's radio does the actual BLE work.</figcaption>
+  <figcaption>The system in one picture: your BLE device talks to the LLM through this chain — its data flows up over the dongle's radio, and the LLM's Lua flows back down the same path.</figcaption>
 </figure>
+
+<h2>One session, three participants</h2>
+
+<p>It helps to name who is actually in the room when a session runs. On your side there are three participants — plus one device at the other end of the radio link:</p>
+
+<ul>
+<li><strong>The device</strong> — your sensor or controller — is where the data is born. It advertises over the air, or holds a GATT connection the dongle can join.</li>
+<li><strong>The USB dongle</strong> collects that data in both ways — advertisements, or a live BLE connection — and streams it as strict JSON lines over USB.</li>
+<li><strong>The PC host</strong> post-processes the stream: it improves the semantics — deduplicates repeats, names devices, tags which data plane a line came from, keeps a bounded rolling snapshot — so raw radio bytes become meaningful, model-ready context. The LLM lives here, one API call away.</li>
+</ul>
+
+<p>And you are the fourth participant: the human who asks the questions and approves the code. The session then runs as one loop. The device's data flows up — dongle, then PC, then post-processed into the LLM's context. The LLM replies with more than words: Lua scripts, tool programs, plain answers, follow-up questions. The code travels back down the same chain and runs <em>on the dongle</em>, meters from the device — filtering its data, transforming it, reacting to it live, driving the dongle's own pins, holding or dropping the connection. That is the real product: <strong>the LLM controls the device through the dongle</strong>, with you watching over its shoulder and holding the deploy key.</p>
 
 <h2>What it looks like from your side</h2>
 
@@ -247,7 +259,7 @@ build\host\test_runner.exe                      :: 160 C tests
 python tests/hw/run_all_hw.py                   :: hardware gate
 python host_app\assistant.py COM12              :: start chatting</code></pre>
 
-<p>If you have ever wanted an LLM that actually touches hardware — with guardrails worth trusting — this is a small, complete example of how to build one.</p>
+<p>If you have ever wanted an LLM that doesn't just talk about your devices but sits in the loop with them — data flowing up through a dongle, working code flowing back down — with guardrails worth trusting, this is a small, complete example of how to build one.</p>
 
 <p><em>The repository: <a href="https://github.com/jinboagent/esp32_lua_llm">github.com/jinboagent/esp32_lua_llm</a> — firmware, host tools, tests, user guides (<code>docs/features.zcode.md</code>, <code>docs/user-guide.zcode.md</code>, <code>docs/demo-first-order.zcode.md</code>), and a 17-slide architecture deck. Thanks for reading.</em></p>
 
