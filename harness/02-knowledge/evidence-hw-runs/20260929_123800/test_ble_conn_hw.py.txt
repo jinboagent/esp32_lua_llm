@@ -1,0 +1,74 @@
+  PASS  device sanity (STATUS)
+  PASS  STATUS conn object present
+  PASS  conn enabled
+  PASS  conn state off at boot
+  PASS  CONN STATUS off
+  PASS  CONN bare -> syntax error
+  PASS  START without target -> -456
+  PASS  TARGET bad uuid -> -450
+  PASS  START bad addr -> -450
+  PASS  INTERVAL below range rejected
+  PASS  INTERVAL 500 ok
+  PASS  INTERVAL above range rejected
+  PASS  STOP when off -> -453
+  PASS  TARGET 128-bit uuid ok
+  PASS  START auto -> ok mode=auto
+  PASS  state peer_search while searching
+  PASS  STOP from peer_search ok
+  PASS  state off after stop
+  PASS  Ctrl+C aborts peer search
+  PASS  direct connect unreachable -> -455
+  PASS  state off after failed direct connect
+  PASS  SCAN START ok
+  PASS  CONN STATUS while scanning
+  PASS  TARGET while scanning ok
+  PASS  auto START while scanning ok (tap path)
+  PASS  STOP while scanning ok
+  PASS  SCAN STOP ok
+  PASS  advertisements still flow
+  PASS  SCAN STOP after churn
+  [peer] advertisement status -> 3
+  [peer] advertisement status -> 2
+  PASS  C1 SCAN START
+  PASS  C1 TARGET svc+char
+  PASS  C1 TARGET response valid JSON with svc+chr echo
+  PASS  C1 auto START (tap path)
+  PASS  C1 connected within 15 s
+  PASS  C1 subscribed (notify mode)
+  PASS  C1 conn lines re-streamed (>=2)
+  PASS  C1 merged payload fields
+  PASS  C1 envelope addr matches peer
+  PASS  C4 SCAN STOP with conn up
+  PASS  C4 POWER active while connected, scan off
+  PASS  C5 responsive after burst
+  PASS  C5 rx_notify counted
+  PASS  C5 STOP ok
+  (C2: direct START rejected — restarting the peer for one retry)
+  [peer] advertisement status -> 3
+  [peer] advertisement status -> 2
+  SKIP  C2 (direct START rejected: {'status': 'error', 'cmd': 'conn_start', 'code': -455} — the WinRT advertisement does not reliably survive a connection cycle on this stack)
+  SKIP  C6 (link supervision longer than window)
+  PASS  C7 boot: cli idle, conn off
+  PASS  C7 idle: TARGET allowed
+  PASS  C7 idle: INTERVAL allowed
+  PASS  C7 idle: conn still off (TARGET/INTERVAL do not connect)
+  PASS  C7 -> scanning
+  PASS  C7 scanning observed
+  PASS  C7 scanning: TARGET composes
+  PASS  C7 -> script loaded (bridge protocol)
+  PASS  C7 -> script running
+  PASS  C7 running observed
+  PASS  C7 running: TARGET -> -911
+  PASS  C7 running: START -> -911
+  PASS  C7 running: INTERVAL -> -911
+  PASS  C7 running: SCAN STOP -> -911
+  PASS  C7 running: STATUS stays allowed
+  PASS  C7 running: STOP stays allowed
+  PASS  C7 running: RUN again -> -911
+  PASS  C7 SCRIPT STOP ok
+  PASS  C7 back to scanning observed
+  PASS  C7 SCRIPT STOP when idle -> -911
+  PASS  C7 -> idle
+  PASS  C7 idle observed
+
+65 passed, 0 failed
