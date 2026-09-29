@@ -43,7 +43,7 @@ CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_DEFAULT=y
 
 # BLE connection feature (F2.4): optional GATT client, default on.
-# Set =n for the minimal passive-sniffer build (CONN answers -451).
+# Set =n for the minimal bridge build (CONN answers -451).
 CONFIG_BLE_CONN_ENABLED=y
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 

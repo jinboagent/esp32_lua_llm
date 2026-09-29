@@ -1,10 +1,17 @@
-# ESP32-S3 BLE Sniffer Dongle
+# ESP32-S3 BLE Bridge Dongle
 
 > Context-optimized project overview for AI coding agents. Full specs in `harness/`. Root `README.md` has build/usage details. New here? `docs/quickstart.md` is the 10-minute path.
 
 ## Architecture
 
-ESP32-S3 passive BLE advertisement scanner → AD parse → C filters → optional Lua hooks → JSON lines over USB CDC → host PC tools. Stage 5 closes the product loop on the PC: an LLM analyzes the stream, answers questions, and writes Lua scripts deployed back over `SCRIPT LOAD`. Optional GATT-central connection plane (F2.4) re-streams peer data as `"src":"conn"` lines (analysis-only — conn lines deliberately bypass the Lua hooks).
+ESP32-S3 BLE bridge dongle: BLE data collection (advertisement scan; optional
+F2.4 GATT connection) → AD parse → C filters → optional Lua hooks → JSON
+lines over USB CDC → host PC tools that enrich the stream with semantics.
+Stage 5 closes the product loop on the PC: an LLM analyzes the stream,
+answers questions, and writes Lua scripts deployed back over `SCRIPT LOAD` —
+the loop device → dongle → PC → LLM → device. The conn plane re-streams peer
+data as `"src":"conn"` lines (analysis-only — conn lines deliberately bypass
+the Lua hooks).
 
 **Three host tools (stage 5):**
 

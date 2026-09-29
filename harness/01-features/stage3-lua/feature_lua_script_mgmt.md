@@ -13,7 +13,7 @@
 
 ## 1. Description
 
-Manage the full lifecycle of user-provided Lua scripts on the BLE sniffer dongle. Scripts are uploaded via USB CDC in a chunked protocol, persisted to LittleFS, and then loaded into the Lua engine for execution. The running script exposes two hooks into the BLE data pipeline:
+Manage the full lifecycle of user-provided Lua scripts on the dongle. Scripts are uploaded via USB CDC in a chunked protocol, persisted to LittleFS, and then loaded into the Lua engine for execution. The running script exposes two hooks into the BLE data pipeline:
 
 - **`on_adv`** — called for each advertisement; returns `true` to pass or `false` to suppress.
 - **`transform`** — called after filtering; returns a custom JSON string for the output.

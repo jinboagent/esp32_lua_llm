@@ -79,7 +79,7 @@ s.background = { color: INK };
 label(s, 0.62, 0.5, 10, "esp32_lua_llm · architecture walkthrough · 2026-09", { mono: true, fs: 13, color: MUTED_INV });
 label(s, 0.62, 1.5, 9.6, "ESP32-S3 · NIMBLE · LUA 5.4 · USB CDC · LLM HOST", { mono: true, fs: 15, color: ACCENT, cs: 2 });
 s.addText("A BLE test lab on a USB dongle,\noperated by an LLM.", { x: 0.58, y: 1.95, w: 9.5, h: 1.95, fontFace: F, fontSize: 40, bold: true, color: INV, margin: 0, lineSpacingMultiple: 1.05 });
-s.addText("Passive sniffing, on-device Lua scripting, and a host-side agent that reads the traffic, writes its own tools — and ships them to the dongle over USB.", { x: 0.62, y: 4.1, w: 8.9, h: 1.0, fontFace: F, fontSize: 16, color: MUTED_INV, margin: 0, lineSpacingMultiple: 1.15 });
+s.addText("BLE bridging with on-device Lua scripting, and a host-side agent that reads the data, writes its own tools — and ships them to the dongle over USB.", { x: 0.62, y: 4.1, w: 8.9, h: 1.0, fontFace: F, fontSize: 16, color: MUTED_INV, margin: 0, lineSpacingMultiple: 1.15 });
 label(s, 0.62, 6.55, 12.2, "v1.1.0 · stages 0–5 complete · stage 6 (agent platform) in progress on Lua_tool_extension_dev", { mono: true, fs: 12.5, color: MUTED_INV });
 // mini schematic, right side
 node(s, 10.3, 2.0, 2.4, 0.62, "PC — LLM host tools", { fill: INK, lineColor: MUTED_INV, lineW: 1, color: INV, fs: 12 });
@@ -89,7 +89,7 @@ node(s, 10.3, 3.12, 2.4, 0.62, "ESP32-S3 dongle", { fill: INK, lineColor: MUTED_
 vline(s, 11.5, 3.74, 4.14, { dash: true });
 label(s, 11.62, 3.78, 1.2, "2.4 GHz", { mono: true, fs: 12, color: MUTED_INV });
 node(s, 10.3, 4.24, 2.4, 0.78, "BLE adverts &\nGATT peers", { fill: INK, lineColor: MUTED_INV, lineW: 1, color: INV, fs: 12 });
-s.addNotes("One-sentence pitch: a $5 ESP32-S3 sniffs BLE and runs Lua; a Python host application puts an LLM in the loop. Everything in this deck is live-verified on hardware. v1.1.0 released; stage 6 (the agent platform) is the current branch.");
+s.addNotes("One-sentence pitch: a $5 ESP32-S3 bridges BLE devices to the PC and runs Lua; a Python host application puts an LLM in the loop. Everything in this deck is live-verified on hardware. v1.1.0 released; stage 6 (the agent platform) is the current branch.");
 
 // ============================================================
 // S2 — WHY
@@ -98,7 +98,7 @@ s = p.addSlide();
 s.background = { color: INV };
 header(s, "00 · MOTIVATION", "Why this project exists");
 const whyRows = [
-  ["Sniffing BLE is heavy", "Proprietary capture hardware, Wireshark, and a fresh one-off parser script for every device you meet."],
+  ["Getting inside BLE is heavy", "Proprietary capture hardware, Wireshark, and a fresh one-off parser script for every device you meet."],
   ["Firmware logic is frozen", "Every filter tweak or new payload format is a rebuild–reflash–retest cycle on the bench."],
   ["A human sits in every loop", "Someone has to read the capture, spot the pattern, and write the next probe script by hand."],
 ];
@@ -649,7 +649,7 @@ label(s, 0.62, 4.02, 12, "Also queued: CONN STOP settle semantics · full batter
 s.addText("The dongle captures. The model thinks.\nThe loop closes.", { x: 0.58, y: 4.55, w: 12.2, h: 1.3, fontFace: F, fontSize: 27, bold: true, color: ACCENT, margin: 0, lineSpacingMultiple: 1.1 });
 s.addText("~5.7k LOC authored firmware (35.8k with vendored Lua 5.4) · ~2.8k Python host tools · 126 Unity C tests\n108 + 33 + 10 pytest · 167 hardware checks · τ̂ 9.5 vs τ 10.0 · v1.1.0", { x: 0.62, y: 6.05, w: 12.1, h: 0.75, fontFace: M, fontSize: 13, color: MUTED_INV, margin: 0, lineSpacingMultiple: 1.25 });
 label(s, 0.62, 6.98, 12, "E:\\agent\\esp32_lua_llm · Lua_tool_extension_dev → master (review pending)", { mono: true, fs: 12, color: MUTED_INV });
-s.addNotes("Close on trajectory: M2 makes tools persistent, M3 turns the dongle into an actor, M4 makes the LLM integration native. Then the one-liner and the numbers strip. Q&A prompts: what would you sniff first?");
+s.addNotes("Close on trajectory: M2 makes tools persistent, M3 turns the dongle into an actor, M4 makes the LLM integration native. Then the one-liner and the numbers strip. Q&A prompts: which device would you bridge first?");
 
 // ---------- write ----------
 p.writeFile({ fileName: "ESP32_Lua_LLM_Architecture.pptx" }).then(() => console.log("WROTE ESP32_Lua_LLM_Architecture.pptx"));

@@ -184,10 +184,10 @@ r = cmd_json(s, "SCAN START")
 try:
     devices = asyncio.run(pc_discover(8.0))
     names = [d.name for d in devices if d.name]
-    sniffer_seen = any("BLE-Sniffer" in (n or "") for n in names) or \
-        any("Sniffer" in (n or "") for n in names)
+    bridge_seen = any("BLE-Bridge" in (n or "") for n in names) or \
+        any("Bridge" in (n or "") for n in names)
     check("dongle NOT discoverable while scanning (v1 passive-only)",
-          not sniffer_seen, f"names seen: {names}")
+          not bridge_seen, f"names seen: {names}")
     print(f"        (PC saw {len(devices)} devices: "
           f"{', '.join(sorted(set(names))[:6]) or 'none named'})")
 except Exception as e:

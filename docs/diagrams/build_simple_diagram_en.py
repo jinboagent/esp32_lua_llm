@@ -63,7 +63,7 @@ def label(x, y, text, color, size=9.5, weight="normal", ha="center"):
 
 
 # ---- title ----
-label(50, 97, "ESP32-S3 BLE Sniffing System · Simple Architecture",
+label(50, 97, "ESP32-S3 BLE Bridge System · Simple Architecture",
       C["ink"], size=17, weight="bold")
 label(50, 93.6, "LLM cloud / PC host (3 sub-blocks) / USB dongle / BLE peers",
       "#78909C", size=8.5)

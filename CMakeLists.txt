@@ -18,4 +18,4 @@ else()
 endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(ble_sniffer)
+project(ble_bridge)

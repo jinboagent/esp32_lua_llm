@@ -21,7 +21,7 @@ Wire the BLE scan output into a multi-stage data pipeline that runs in its own F
 4. **Encode** as JSON (`json_encode_adv`)
 5. **Output** via USB CDC console (`usb_console_send_line`)
 
-The pipeline is the central data-path of the sniffer dongle. It connects BLE input to USB output with optional filtering and transformation in between.
+The pipeline is the central data-path of the dongle. It connects BLE input to USB output with optional filtering and transformation in between.
 
 ---
 

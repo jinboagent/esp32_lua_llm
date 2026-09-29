@@ -1,8 +1,8 @@
-# Project Overview: ESP32-S3 BLE Sniffer Dongle
+# Project Overview: ESP32-S3 BLE Bridge Dongle
 
 ## Product
 
-A USB dongle that passively scans BLE advertisements, parses them, applies user-defined filters/transforms, and outputs JSON lines over USB CDC serial. Target user: IoT developers building or debugging BLE-based IoT products.
+A USB dongle that bridges BLE devices and an LLM through the PC host: it connects to the BLE world (GATT connection + advertisement collection), parses the data, applies user-defined filters/transforms, and outputs JSON lines over USB CDC serial; the host post-processes the stream for semantics, and the LLM writes Lua back to the dongle. Target user: IoT developers building or debugging BLE-based IoT products.
 
 On-device Lua 5.4 scripting enables custom filter and transform logic. A PC-side LLM loop can analyze captured traffic and generate Lua scripts that are deployed back to the device.
 

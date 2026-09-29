@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""System architecture diagram for the ESP32-S3 BLE sniffer dongle x LLM
+"""System architecture diagram for the ESP32-S3 BLE bridge dongle x LLM
 framework. Generates a detailed, four-domain block diagram plus two focus
 panels (Lua tool registration loop; first-order plant estimation case).
 
@@ -90,7 +90,7 @@ def side_label(x, y, text, color, lsize=7.6, weight="normal", ha="left"):
 
 
 # ---- title -----------------------------------------------------------------
-ax.text(50, 98.4, "ESP32-S3 BLE 嗅探 Dongle × LLM 系统架构(全链路数据流 + 工具闭环)",
+ax.text(50, 98.4, "ESP32-S3 BLE 桥接 Dongle × LLM 系统架构(全链路数据流 + 工具闭环)",
         ha="center", va="center", fontsize=17.5, fontweight="bold",
         color=C["ink"])
 ax.text(50, 95.9, "adv plane: 被动扫描 → 解析 → C 过滤 → Lua 钩子 → JSON ·  "

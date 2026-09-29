@@ -40,7 +40,7 @@ print(f"max ts (ms) : {max_ts}  {'<-- PAST 10.24s WINDOW: restart WORKS' if max_
 
 bad = [ln for ln in lines if any(k in ln for k in
        ("Guru Meditation", "abort", "assert", "panic", "Backtrace",
-        "=== BLE Sniffer Dongle", "rst:", "cpu_start"))]
+        "=== BLE Bridge Dongle", "rst:", "cpu_start"))]
 if bad:
     print("--- CRASH/REBOOT EVIDENCE ---")
     for ln in bad[:12]:

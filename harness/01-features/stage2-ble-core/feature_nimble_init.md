@@ -13,7 +13,7 @@
 
 ## 1. Description
 
-Initialize the NimBLE BLE stack on the ESP32-S3 in host-only mode (no GATT server). Configure the GAP layer with a public device address, set the device name to `"BLE-Sniffer"`, and set the GAP appearance to the generic sensor icon. After initialization the stack must be ready to begin passive scanning.
+Initialize the NimBLE BLE stack on the ESP32-S3 in host-only mode (no GATT server). Configure the GAP layer with a public device address, set the device name to `"BLE-Bridge"`, and set the GAP appearance to the generic sensor icon. After initialization the stack must be ready to begin passive scanning.
 
 This feature owns the full lifecycle of the NimBLE host: start, health check, and shutdown.
 
@@ -43,7 +43,7 @@ This feature owns the full lifecycle of the NimBLE host: start, health check, an
 |-----------|---------------|-------|
 | Mode | Host-only | No GATT server registered; no services, no characteristics |
 | Address type | Public | Use the factory MAC address |
-| Device name | `"BLE-Sniffer"` | Set via `ble_gap_set_device_name()` |
+| Device name | `"BLE-Bridge"` | Set via `ble_gap_set_device_name()` |
 | Appearance | Generic Sensor (0x0300) | GAP appearance characteristic value |
 | Bonding | Disabled | No pairing or bonding |
 | MTU | Default (256) | No custom MTU negotiation needed |

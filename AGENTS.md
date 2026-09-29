@@ -1,4 +1,4 @@
-# AGENTS.md — ESP32-S3 BLE Sniffer Dongle
+# AGENTS.md — ESP32-S3 BLE Bridge Dongle
 
 > **Author:** zcode · 2026-09-07 · Workspace instructions for ZCode agents.
 > Keep in sync with `CLAUDE.md` (same project, other agent readers). Full specs
@@ -6,11 +6,14 @@
 
 ## What this repo is
 
-ESP32-S3 passive BLE advertisement scanner firmware → AD parse → C filters →
-optional Lua hooks → strict-JSON lines over USB CDC → self-contained Python
-host tools where an LLM analyzes the stream and writes Lua deployed back over
-`SCRIPT LOAD`. Optional GATT-central conn plane (F2.4) re-streams peer data as
-`"src":"conn"` lines — analysis-only, deliberately bypassing the Lua hooks.
+ESP32-S3 BLE bridge firmware → BLE data collection (advertisement scan +
+optional GATT connection) → AD parse → C filters → optional Lua hooks →
+strict-JSON lines over USB CDC → self-contained Python host tools that
+enrich the stream with semantics, where an LLM analyzes it and writes Lua
+deployed back over `SCRIPT LOAD` — the control loop
+device → dongle → PC → LLM → device. The conn plane (F2.4) re-streams peer
+data as `"src":"conn"` lines — analysis-only, deliberately bypassing the
+Lua hooks.
 
 Three stage-5 host tools: `llm_loop.py` (batch capture→LLM→deploy→verify),
 `host_app/run_case.py` (pluggable data-generator cases, `--estimate` checks

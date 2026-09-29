@@ -13,7 +13,7 @@
 
 ## Functional Description
 
-Implements power-saving strategies for the BLE sniffer dongle:
+Implements power-saving strategies for the dongle:
 
 1. **Light sleep between scan intervals** — When the scan pipeline is idle
    (waiting for the next scan window), the system enters light sleep to

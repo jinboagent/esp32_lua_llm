@@ -63,7 +63,7 @@ def label(x, y, text, color, size=9.5, weight="normal", ha="center"):
 
 
 # ---- title ----
-label(50, 97, "ESP32-S3 BLE 嗅探系统 · 简明架构图", C["ink"], size=17,
+label(50, 97, "ESP32-S3 BLE 桥接系统 · 简明架构图", C["ink"], size=17,
       weight="bold")
 label(50, 93.6, "与 harness/00-global-context/project_overview.md 同层级 · "
                 "细节版见 docs/diagrams/system_architecture.zcode.png",

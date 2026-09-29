@@ -1,6 +1,6 @@
-# BLE Sniffer Dongle — Learning Roadmap
+# BLE Bridge Dongle — Learning Roadmap
 
-A structured study plan for building the ESP32-S3 BLE sniffer dongle.
+A structured study plan for building the ESP32-S3 BLE bridge dongle.
 Topics are ordered by priority — start from the top and work down.
 
 ---
@@ -540,7 +540,7 @@ Same .c files, different toolchains, different outputs
 ```
 INPUT (you write)              OUTPUT (build generates)
 ─────────────────              ────────────────────────
-CMakeLists.txt                 build/ble_sniffer.bin
+CMakeLists.txt                 build/ble_bridge.bin
 sdkconfig.defaults             build/config/sdkconfig.h
 partitions.csv                 build/partition_table/partition-table.bin
 main/main.c                    build/esp-idf/*/lib*.a

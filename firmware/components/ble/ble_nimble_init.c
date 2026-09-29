@@ -78,7 +78,7 @@ int ble_init(void)
     ble_hs_cfg.reset_cb = s_on_reset;
 
     /* Set device name */
-    int rc = ble_svc_gap_device_name_set("BLE-Sniffer");
+    int rc = ble_svc_gap_device_name_set("BLE-Bridge");
     if (rc != 0) {
         printf("BLE: failed to set device name: %d\n", rc);
     }
@@ -110,7 +110,7 @@ int ble_init(void)
     }
 
     s_initialized = true;
-    printf("BLE: NimBLE initialized, device name: BLE-Sniffer\n");
+    printf("BLE: NimBLE initialized, device name: BLE-Bridge\n");
     return 0;
 }
 

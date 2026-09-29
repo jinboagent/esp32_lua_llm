@@ -26,7 +26,7 @@ static void s_conn_event(bool connected, const uint8_t *addr)
 
 void app_main(void)
 {
-    printf("\n=== BLE Sniffer Dongle v1.0.0 ===\n");
+    printf("\n=== BLE Bridge Dongle v1.0.0 ===\n");
     /* Boot observability: esp_reset_reason() — 1=poweron, 3=sw, 4=panic,
      * 6=task-wdt, 9=brownout, 11=USB. USB resets occur when the host
      * closes the COM port mid-scan (USB-Serial/JTAG chip behavior). */

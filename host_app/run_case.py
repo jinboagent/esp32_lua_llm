@@ -782,7 +782,7 @@ def main():
                      choices=sorted(CASES))
     case = CASES[pre.parse_known_args()[0].case]()
     p = argparse.ArgumentParser(
-        description="Host application-case runner for the BLE sniffer "
+        description="Host application-case runner for the BLE bridge "
                     "dongle (spec: harness/01-features/stage5-host/).")
     p.add_argument("port", nargs="?", default="COM12",
                    help="serial port (default COM12)")

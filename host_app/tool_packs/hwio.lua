@@ -19,10 +19,10 @@ HWIO_M = HWIO_M .. [["example":{"args":{"pin":5},"result":"adc1 gpio5 raw 1873"}
 HWIO_M = HWIO_M .. [["name":"cfg_set","doc":"Persist a device parameter (survives reboot - the configure mode).",]]
 HWIO_M = HWIO_M .. [["args":[{"name":"key","type":"string"},{"name":"value","type":"string"}],]]
 HWIO_M = HWIO_M .. [["returns":"ack","mutating":true,]]
-HWIO_M = HWIO_M .. [["example":{"args":{"key":"name","value":"sniff1"},"result":"ok: name=sniff1"}},{]]
+HWIO_M = HWIO_M .. [["example":{"args":{"key":"name","value":"bridge1"},"result":"ok: name=bridge1"}},{]]
 HWIO_M = HWIO_M .. [["name":"cfg_get","doc":"Read a persisted device parameter.",]]
 HWIO_M = HWIO_M .. [["args":[{"name":"key","type":"string"}],"returns":"value","mutating":false,]]
-HWIO_M = HWIO_M .. [["example":{"args":{"key":"name"},"result":"name=sniff1"}}]}]]
+HWIO_M = HWIO_M .. [["example":{"args":{"key":"name"},"result":"name=bridge1"}}]}]]
 function manifest() return HWIO_M end
 function uptime_ms(a) if hw==nil then return "err: hw bindings off" end return tostring(hw.millis()) .. " ms" end
 function pin_read(a) if hw==nil then return "err: hw bindings off" end return "pin " .. a.pin .. " = " .. tostring(hw.gpio_read(a.pin)) end

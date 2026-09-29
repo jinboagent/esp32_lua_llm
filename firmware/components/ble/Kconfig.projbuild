@@ -1,4 +1,4 @@
-menu "BLE Sniffer"
+menu "BLE Bridge"
 
 config BLE_CONN_ENABLED
     bool "Enable optional BLE connection feature (GATT client, F2.4)"

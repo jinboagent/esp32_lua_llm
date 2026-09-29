@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The Dongle That Writes Its Own Tools: An ESP32-S3 BLE Lab Operated by an LLM</title>
 <meta name="author" content="bo li">
-<meta name="description" content="Architecture walkthrough of an ESP32-S3 BLE sniffer dongle that streams strict JSON over USB while an LLM host analyzes the traffic and deploys sandboxed Lua tools back to the device.">
+<meta name="description" content="Architecture walkthrough of an ESP32-S3 BLE bridge dongle that connects devices to an LLM through a PC host: strict-JSON telemetry over USB, semantic post-processing, and sandboxed Lua tools deployed back to control the device.">
 <!--
   HOW TO PUBLISH ON MEDIUM
   1. Commit this page TOGETHER WITH the img/ folder (the <img> tags use
@@ -43,9 +43,9 @@
 
 <h1>The Dongle That Writes Its Own Tools: An ESP32-S3 BLE Lab Operated by an LLM</h1>
 
-<p><em>A five-dollar ESP32-S3 passively sniffs BLE traffic and streams strict JSON lines over USB. On the host side, an LLM reads that traffic, answers your questions, writes Lua code, defines its own tools, and deploys them back to the dongle — sandboxed, confirm-gated, and verified live on real hardware. This article explains the system, the data flow, and — from a user's point of view — what you can actually do with it.</em></p>
+<p><em>A five-dollar ESP32-S3 dongle bridges BLE devices and a cloud LLM through your PC. The dongle collects advertisement and GATT-connection data and streams strict JSON lines over USB; the host post-processes that stream, enriching it with semantics, and an LLM reads it, answers your questions, writes Lua code, defines its own tools, and deploys them back to the dongle — sandboxed, confirm-gated, and verified live on real hardware. This article explains the system, the data flow, and — from a user's point of view — what you can actually do with it.</em></p>
 
-<p>Debugging Bluetooth Low Energy devices is oddly manual. You either buy a proprietary sniffer, fight Wireshark captures, or write a throwaway parser script for every new device you meet. And when you want the firmware itself to filter or interpret traffic differently, you are back on the bench: rebuild, reflash, retest.</p>
+<p>Debugging Bluetooth Low Energy devices is oddly manual. You either buy a dedicated capture gadget, fight Wireshark captures, or write a throwaway parser script for every new device you meet. And when you want the firmware itself to filter or interpret traffic differently, you are back on the bench: rebuild, reflash, retest.</p>
 
 <p>This project takes a different bet: put a <strong>Lua sandbox on a cheap radio</strong>, and put an <strong>LLM on the host side</strong> where it can extend its own instrumentation. The dongle keeps watch; the model reads the traffic; new tooling ships over USB in seconds instead of reflash cycles. The whole loop — capture, analyze, generate, deploy, observe — runs against real hardware today, and every claim in this article is backed by a check in a 300+ test harness.</p>
 

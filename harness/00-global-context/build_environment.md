@@ -153,10 +153,10 @@ a regular user. Git refuses to operate on directories owned by a different user.
 
 ### 4.2 CMake target name error
 ```
-CMake Error: Cannot specify include directories for target "ble_sniffer.elf"
+CMake Error: Cannot specify include directories for target "ble_bridge.elf"
 which is not built by this project.
 ```
-**Cause:** Used `target_include_directories(ble_sniffer.elf ...)` in main/CMakeLists.txt.
+**Cause:** Used `target_include_directories(ble_bridge.elf ...)` in main/CMakeLists.txt.
 ESP-IDF components must use `INCLUDE_DIRS` in `idf_component_register()` instead.
 **Fix:** Changed to `idf_component_register(INCLUDE_DIRS "." "${CMAKE_SOURCE_DIR}/interfaces")`
 

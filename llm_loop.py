@@ -50,7 +50,7 @@ DEFAULT_GOAL = ("Suppress weak/noisy advertisers; keep only interesting "
                 "devices and emit a compact JSON line with addr, name "
                 "(when known) and rssi.")
 
-SYSTEM_PROMPT = """You write Lua 5.4 scripts for an ESP32-S3 BLE sniffer dongle.
+SYSTEM_PROMPT = """You write Lua 5.4 scripts for an ESP32-S3 BLE bridge dongle.
 The script runs in a sandbox: only the string, table, math and utf8 libraries
 exist. os, io, debug, dofile and require are absent and using them is
 rejected. The script must stay under 8192 bytes and each hook must finish in
@@ -438,7 +438,7 @@ def do_loop(s, args):
 
 def main():
     p = argparse.ArgumentParser(
-        description="Host-side LLM loop for the BLE sniffer dongle "
+        description="Host-side LLM loop for the BLE bridge dongle "
                     "(spec: harness/01-features/stage5-host/).")
     p.add_argument("port", nargs="?", default="COM12",
                    help="serial port (default COM12)")

@@ -1,4 +1,4 @@
-"""Interactive LLM assistant session for the sniffer dongle (H5.3).
+"""Interactive LLM assistant session for the BLE bridge dongle (H5.3).
 
 A message Prompt (event loop) multiplexes two inputs onto one loop:
 the dongle's USB JSON lines and the operator's console input. While the
@@ -124,7 +124,7 @@ DEPLOY_RE = re.compile(
     r"|^\s*(?:on_adv|transform|manifest)\s*=")
 
 SYSTEM_PROMPT = """You are the assistant inside a host-side session for an
-ESP32-S3 BLE sniffer dongle. The dongle streams JSON lines over USB; a
+ESP32-S3 BLE bridge dongle. The dongle streams JSON lines over USB; a
 snapshot of the most recent lines is attached to each user message.
 
 DATA PLANES AND MODE BOUNDARY (mandatory):
@@ -2127,7 +2127,7 @@ class Session:
 
 def main():
     p = argparse.ArgumentParser(
-        description="Interactive LLM assistant session for the BLE sniffer "
+        description="Interactive LLM assistant session for the BLE bridge "
                     "dongle (spec: harness/01-features/stage5-host/).")
     p.add_argument("port", nargs="?", default="COM12",
                    help="serial port (default COM12)")

@@ -183,7 +183,7 @@ static int s_gap_event_handler(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_DISC_COMPLETE:
         /* N2 fix: NimBLE discovery runs in finite-duration windows. A
-         * continuous sniffer must start the next window here — the old
+         * continuous scan must start the next window here — the old
          * code just marked the scan over, so every scan died after ~10 s.
          * ble_scan_stop clears s_scanning before cancelling, so a
          * user-requested stop never restarts. F2.4: neither does a pause

@@ -1,10 +1,12 @@
-# ESP32-S3 BLE Sniffer Dongle
+# ESP32-S3 BLE Bridge Dongle
 
-A USB dongle that passively scans BLE advertisements, parses and filters them
-(with optional on-device Lua scripting), and streams structured JSON lines to
-a host PC over USB CDC. A host-side LLM can analyze the captured traffic and
-generate Lua scripts that are deployed back to the device — an AI-driven BLE
-analysis loop.
+A USB dongle that bridges BLE devices and a cloud LLM through your PC. The
+dongle connects to the BLE world — GATT connections plus advertisement
+collection — parses and filters the data (with optional on-device Lua), and
+streams structured JSON lines to the host over USB CDC. The host
+post-processes the stream, enriching it with semantics; an LLM reads it,
+answers you, and writes Lua that is deployed back to the dongle — closing
+the loop: device → dongle → PC → LLM → device.
 
 ## Status: v1.1.0 — stages 1–5 complete ✅
 
@@ -61,11 +63,13 @@ analysis loop.
      USB console TX (mutex-serialized lines)
 ```
 
-Product loop (the reason the device exists): scan JSON → host LLM analyzes
-→ LLM writes a Lua filter/transform → `SCRIPT LOAD` deploys it (sandboxed)
-→ device streams only what matters. The passive scan core stays scan-only;
-since F2.4 an optional, build-flagged GATT-client connection can additionally
-attach to one peer and re-stream its notifications as `"src":"conn"` lines.
+Product loop (the reason the device exists): BLE data in → JSON out → the
+host post-processes and adds semantics → the LLM analyzes and writes a Lua
+filter/transform → `SCRIPT LOAD` deploys it (sandboxed) → the dongle acts on
+the device with only what matters. The advertisement-scan core stays
+scan-only; since F2.4 an optional, build-flagged GATT-client connection can
+additionally attach to one peer and re-stream its notifications as
+`"src":"conn"` lines.
 
 ### Firmware modules (`firmware/components/`, public APIs in `interfaces/`)
 

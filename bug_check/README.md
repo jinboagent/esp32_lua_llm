@@ -1,4 +1,4 @@
-# Bug Tracking — BLE Sniffer Dongle
+# Bug Tracking — BLE Bridge Dongle
 
 > Consolidated index. **2026-08-11**: eval found H1/H2/H3 + 4 stale test
 > scripts; all fixed and regression-covered the same day (fix report below).
